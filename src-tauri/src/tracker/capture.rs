@@ -78,7 +78,7 @@ mod platform {
                 cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
                 dwTime: 0,
             };
-            if GetLastInputInfo(&mut info).is_err() {
+            if !GetLastInputInfo(&mut info).as_bool() {
                 return None;
             }
             let tick = windows::Win32::System::SystemInformation::GetTickCount();
