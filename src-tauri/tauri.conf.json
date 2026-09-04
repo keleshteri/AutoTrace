@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "AutoTrace",
         "width": 1100,
         "height": 720,

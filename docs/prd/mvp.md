@@ -5,10 +5,10 @@ Local-only personal tracker. See [prd/vision.md](vision.md) for the why and [res
 ## Runtime
 
 - [x] Tauri 2 app shell (Rust + React/TS) builds and runs
-- [ ] System tray icon with show/hide/pause/resume/quit
+- [x] System tray icon with show/hide/pause/resume/quit
 - [ ] Launch-at-login option
-- [ ] Foreground-window tracker (Windows first) logs active app + window title + timestamp every ~1s
-- [ ] Idle detection (configurable threshold, default 2-5 min)
+- [x] Foreground-window tracker (Windows first) logs active app + window title + timestamp every ~1s
+- [x] Idle detection (configurable threshold, default 2-5 min)
 - [ ] Work-hours schedule (only track during set hours)
 - [ ] Exclude rules for specific apps/sites
 
@@ -21,8 +21,9 @@ Local-only personal tracker. See [prd/vision.md](vision.md) for the why and [res
 
 ## UI
 
-- [ ] Day timeline view
-- [ ] Client → Project → Task manager (create/edit)
+- [x] Day timeline view
+- [x] Client → Project → Task manager (create; edit later)
+
 - [ ] Keyword/rules-based auto-tagging of sessions
 - [ ] Review panel: edit, merge, split, approve a session's tag
 - [ ] Manual time entry (add/edit anytime)

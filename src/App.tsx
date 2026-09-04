@@ -1,97 +1,89 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useState } from "react";
+import { Timeline } from "./components/Timeline";
+import { Projects } from "./components/Projects";
+import { StatusPanel } from "./components/StatusPanel";
+import { api, AppStatus } from "./lib/api";
 import "./App.css";
 
-type TrackerInfo = {
-  status: "idle" | "running" | "paused";
-  platform: string;
-  capture_ready: boolean;
-};
-
-type AppStatus = {
-  name: string;
-  version: string;
-  db_path: string;
-  schema_version: number;
-  tracker: TrackerInfo;
-  network_enabled: boolean;
-};
+type Tab = "timeline" | "projects" | "status";
 
 function App() {
+  const [tab, setTab] = useState<Tab>("timeline");
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    invoke<AppStatus>("get_app_status")
-      .then(setStatus)
-      .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : String(err)),
-      );
+  const refreshStatus = useCallback(async () => {
+    try {
+      setStatus(await api.getAppStatus());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshStatus();
+    const id = window.setInterval(() => void refreshStatus(), 2000);
+    return () => window.clearInterval(id);
+  }, [refreshStatus]);
 
   return (
     <div className="shell">
       <header className="header">
         <div>
-          <p className="eyebrow">Local-only · Phase 0</p>
+          <p className="eyebrow">Local-only</p>
           <h1>AutoTrace</h1>
         </div>
-        {status && (
-          <span className="badge" data-ok={!status.network_enabled}>
-            {status.network_enabled ? "Network on" : "No network"}
-          </span>
-        )}
+        <div className="header-meta">
+          {status && (
+            <span
+              className="badge"
+              data-ok={status.tracker.status === "running"}
+            >
+              {status.tracker.status}
+              {status.tracker.current_app
+                ? ` · ${status.tracker.current_app}`
+                : ""}
+            </span>
+          )}
+          {status && (
+            <span className="badge" data-ok={!status.network_enabled}>
+              {status.network_enabled ? "Network on" : "No network"}
+            </span>
+          )}
+        </div>
       </header>
 
+      <nav className="tabs" aria-label="Main">
+        {(
+          [
+            ["timeline", "Timeline"],
+            ["projects", "Projects"],
+            ["status", "Status"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={tab === id ? "active" : undefined}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {error && <p className="error">Error: {error}</p>}
+
       <main className="main">
-        <p className="lede">
-          Privacy-first automatic time tracking. Activity stays on this machine
-          until you explicitly opt into an integration.
-        </p>
-
-        {error && <p className="error">Failed to load status: {error}</p>}
-
-        {!status && !error && <p className="muted">Connecting to Rust backend…</p>}
-
-        {status && (
-          <dl className="status-grid">
-            <div>
-              <dt>Version</dt>
-              <dd>{status.version}</dd>
-            </div>
-            <div>
-              <dt>Schema</dt>
-              <dd>v{status.schema_version}</dd>
-            </div>
-            <div>
-              <dt>Platform</dt>
-              <dd>{status.tracker.platform}</dd>
-            </div>
-            <div>
-              <dt>Tracker</dt>
-              <dd>
-                {status.tracker.status}
-                {!status.tracker.capture_ready && " (capture next)"}
-              </dd>
-            </div>
-            <div className="wide">
-              <dt>SQLite path</dt>
-              <dd className="path">{status.db_path}</dd>
-            </div>
-          </dl>
+        {tab === "timeline" && <Timeline onError={setError} />}
+        {tab === "projects" && <Projects onError={setError} />}
+        {tab === "status" && (
+          <StatusPanel
+            status={status}
+            onPause={() => void api.pauseTracking().then(refreshStatus)}
+            onResume={() => void api.resumeTracking().then(refreshStatus)}
+          />
         )}
-
-        <section className="next">
-          <h2>Next up</h2>
-          <ul>
-            <li>System tray (show / hide / pause / resume / quit)</li>
-            <li>Windows foreground-window capture (~1s poll)</li>
-            <li>Day timeline UI + client → project → task manager</li>
-          </ul>
-          <p className="muted">
-            See <code>docs/prd/mvp.md</code> for the full checklist.
-          </p>
-        </section>
       </main>
     </div>
   );

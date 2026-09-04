@@ -20,7 +20,8 @@ Product docs live in [`docs/`](docs/README.md). Start with the [vision](docs/prd
 - Platform deps for Tauri: see [Tauri prerequisites](https://tauri.app/start/prerequisites/)
   - **Windows**: WebView2 (usually preinstalled on Win10/11)
   - **macOS**: Xcode CLT
-  - **Linux**: `webkit2gtk`, `libgtk-3`, etc.
+  - **Linux**: `webkit2gtk`, `libgtk-3`, etc. For capture while developing: `xdotool` (and optionally `xprintidle`)
+
 
 ## Develop
 
@@ -45,10 +46,11 @@ pnpm tauri:build
 
 ```
 docs/           Product / architecture / privacy docs
-src/            React UI
+src/            React UI (timeline, projects, status)
 src-tauri/      Rust backend
-  src/store/    SQLite schema + open/migrate
-  src/tracker/  Foreground-window capture (stub → Windows first)
+  src/store/    SQLite schema + CRUD
+  src/tracker/  ~1s foreground capture (Windows Win32; Linux via xdotool)
+  src/tray.rs   System tray menu
   src/tagger/   Rules engine (stub)
   src/commands.rs
 .github/        CI stubs
@@ -63,4 +65,4 @@ src-tauri/      Rust backend
 
 ## Current phase
 
-**Phase 0 — Foundation**: buildable Tauri shell, SQLite schema, module stubs. Capture and timeline UI land in Phase 1 (see [roadmap](docs/timeline/roadmap.md)).
+**Phase 1 — MVP in progress**: tray + capture + timeline + client/project/task CRUD. Still to do: rules auto-tagging, review/approve, reports, CSV, privacy page, launch-at-login (see [roadmap](docs/timeline/roadmap.md)).
