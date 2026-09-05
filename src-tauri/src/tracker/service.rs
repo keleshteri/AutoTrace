@@ -26,6 +26,8 @@ pub struct TrackerInfo {
     pub capture_ready: bool,
     pub current_app: Option<String>,
     pub current_title: Option<String>,
+    /// Active open session id (touched every second while tracking).
+    pub live_session_id: Option<i64>,
 }
 
 struct LiveSession {
@@ -78,6 +80,7 @@ impl TrackerHandle {
             capture_ready: capture::capture_supported(),
             current_app: g.current.as_ref().map(|c| c.app_name.clone()),
             current_title: g.current.as_ref().and_then(|c| c.title.clone()),
+            live_session_id: g.live.as_ref().map(|l| l.id),
         }
     }
 
@@ -112,9 +115,7 @@ impl Drop for TrackerHandle {
 fn poll_loop(store: Arc<Store>, inner: Arc<Mutex<Inner>>, stop: Arc<AtomicBool>) {
     let mut was_paused = false;
     while !stop.load(Ordering::SeqCst) {
-        let status = {
-            inner.lock().expect("tracker mutex").status
-        };
+        let status = { inner.lock().expect("tracker mutex").status };
 
         if status == TrackerStatus::Running {
             was_paused = false;
@@ -141,7 +142,6 @@ fn end_live(store: &Store, inner: &Mutex<Inner>) {
 }
 
 fn tick(store: &Store, inner: &Mutex<Inner>) {
-    // Respect work-hours / weekday schedule.
     let hhmm = Local::now().format("%H:%M").to_string();
     if !store.within_work_hours(&hhmm).unwrap_or(true) {
         end_live(store, inner);
@@ -179,24 +179,48 @@ fn tick(store: &Store, inner: &Mutex<Inner>) {
     let mut g = inner.lock().expect("tracker mutex poisoned");
     g.current = sample.clone();
 
+    // Stronger chunking: same app stays one session; title changes keep the block.
     let same_activity = match (&g.live, &sample, is_idle) {
         (Some(live), Some(sample), false) => {
-            live.app_name == sample.app_name && live.title == sample.title && !live.idle
+            live.app_name.eq_ignore_ascii_case(&sample.app_name) && !live.idle
         }
         (Some(live), None, true) => live.idle,
         _ => false,
     };
 
     if same_activity {
-        let id = g.live.as_ref().map(|l| l.id);
+        let (id, title_changed, new_title, new_url, app_name) = {
+            let live = g.live.as_mut().unwrap();
+            let title_changed = match &sample {
+                Some(s) => live.title != s.title,
+                None => false,
+            };
+            if let Some(s) = &sample {
+                live.title = s.title.clone();
+            }
+            (
+                live.id,
+                title_changed,
+                sample.as_ref().and_then(|s| s.title.clone()),
+                sample.as_ref().and_then(|s| s.url.clone()),
+                sample.as_ref().map(|s| s.app_name.clone()),
+            )
+        };
         drop(g);
-        if let Some(id) = id {
-            let _ = store.touch_session(id, &now, is_idle);
+        if title_changed {
+            if let Some(app) = app_name {
+                let _ = store.record_activity_event(
+                    &app,
+                    new_title.as_deref(),
+                    new_url.as_deref(),
+                    &now,
+                );
+            }
         }
+        let _ = store.touch_session(id, &now, is_idle);
         return;
     }
 
-    // Activity changed — close previous, open new.
     if let Some(live) = g.live.take() {
         drop(g);
         let _ = store.end_session(live.id, &now);
@@ -259,6 +283,13 @@ fn open_session(
     };
     let confidence = tag.as_ref().map(|t| t.confidence);
     let pending = confirm && !idle;
+    let category = crate::tagger::infer_category(
+        idle,
+        &sample.app_name,
+        title.as_deref(),
+        url.as_deref(),
+        None,
+    );
 
     let Ok(id) = store.start_session(
         app_id,
@@ -268,6 +299,7 @@ fn open_session(
         idle,
         confidence,
         pending,
+        Some(category),
     ) else {
         return;
     };

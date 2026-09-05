@@ -122,11 +122,12 @@ impl Store {
         idle: bool,
         confidence: Option<f32>,
         pending: bool,
+        category: Option<&str>,
     ) -> Result<i64> {
         let conn = self.conn.lock().expect("store mutex poisoned");
         conn.execute(
-            "INSERT INTO sessions (app_id, title, url, started_at, ended_at, idle, confidence, pending)
-             VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7)",
+            "INSERT INTO sessions (app_id, title, url, started_at, ended_at, idle, confidence, pending, category)
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8)",
             params![
                 app_id,
                 title,
@@ -134,7 +135,8 @@ impl Store {
                 started_at,
                 idle as i64,
                 confidence.map(|c| c as f64),
-                pending as i64
+                pending as i64,
+                category
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -168,7 +170,7 @@ impl Store {
             "SELECT s.id, s.app_id, a.name, s.title, s.url, s.started_at, s.ended_at, s.idle,
                     s.client_id, s.project_id, s.task_id,
                     c.name, p.name, t.name,
-                    s.approved, s.manual, s.notes, s.confidence, s.pending
+                    s.approved, s.manual, s.notes, s.confidence, s.pending, s.category
              FROM sessions s
              LEFT JOIN apps a ON a.id = s.app_id
              LEFT JOIN clients c ON c.id = s.client_id
@@ -592,11 +594,21 @@ impl Store {
         project_id: Option<i64>,
         task_id: Option<i64>,
         notes: Option<&str>,
+        category: Option<&str>,
     ) -> Result<i64> {
+        let category = category.or_else(|| {
+            if notes.map(|n| n.eq_ignore_ascii_case("Focus session")).unwrap_or(false)
+                || title.eq_ignore_ascii_case("focus")
+            {
+                Some("Focus")
+            } else {
+                Some("Other")
+            }
+        });
         let conn = self.conn.lock().expect("store mutex poisoned");
         conn.execute(
-            "INSERT INTO sessions (title, started_at, ended_at, idle, client_id, project_id, task_id, manual, notes, approved, confidence, pending)
-             VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, 1, ?7, 1, 1.0, 0)",
+            "INSERT INTO sessions (title, started_at, ended_at, idle, client_id, project_id, task_id, manual, notes, approved, confidence, pending, category)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, 1, ?7, 1, 1.0, 0, ?8)",
             params![
                 title,
                 started_at,
@@ -604,7 +616,8 @@ impl Store {
                 client_id,
                 project_id,
                 task_id,
-                notes
+                notes,
+                category
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -625,7 +638,7 @@ impl Store {
             "SELECT s.id, s.app_id, a.name, s.title, s.url, s.started_at, s.ended_at, s.idle,
                     s.client_id, s.project_id, s.task_id,
                     c.name, p.name, t.name,
-                    s.approved, s.manual, s.notes, s.confidence, s.pending
+                    s.approved, s.manual, s.notes, s.confidence, s.pending, s.category
              FROM sessions s
              LEFT JOIN apps a ON a.id = s.app_id
              LEFT JOIN clients c ON c.id = s.client_id
@@ -808,6 +821,7 @@ impl Store {
                 None,
                 None,
                 Some("From calendar"),
+                Some("Meeting"),
             )?;
             created += 1;
         }
@@ -821,7 +835,7 @@ impl Store {
                 "SELECT s.id, s.app_id, a.name, s.title, s.url, s.started_at, s.ended_at, s.idle,
                         s.client_id, s.project_id, s.task_id,
                         c.name, p.name, t.name,
-                        s.approved, s.manual, s.notes, s.confidence, s.pending
+                        s.approved, s.manual, s.notes, s.confidence, s.pending, s.category
                  FROM sessions s
                  LEFT JOIN apps a ON a.id = s.app_id
                  LEFT JOIN clients c ON c.id = s.client_id
@@ -845,6 +859,7 @@ impl Store {
         client_id: Option<i64>,
         project_id: Option<i64>,
         task_id: Option<i64>,
+        category: Option<&str>,
     ) -> Result<()> {
         if let Some(end) = ended_at {
             if end < started_at {
@@ -856,8 +871,8 @@ impl Store {
         let conn = self.conn.lock().expect("store mutex poisoned");
         conn.execute(
             "UPDATE sessions SET title = ?1, started_at = ?2, ended_at = ?3, notes = ?4,
-             client_id = ?5, project_id = ?6, task_id = ?7, updated_at = datetime('now')
-             WHERE id = ?8",
+             client_id = ?5, project_id = ?6, task_id = ?7, category = ?8, updated_at = datetime('now')
+             WHERE id = ?9",
             params![
                 title,
                 started_at,
@@ -866,6 +881,7 @@ impl Store {
                 client_id,
                 project_id,
                 task_id,
+                category,
                 session_id
             ],
         )?;
@@ -910,6 +926,10 @@ impl Store {
             .find(|r| r.client_id.is_some() || r.project_id.is_some() || r.task_id.is_some())
             .unwrap_or(&rows[0]);
 
+        let category = rows
+            .iter()
+            .find_map(|r| r.category.clone())
+            .or_else(|| rows[0].category.clone());
         self.update_session(
             keep_id,
             title.as_deref(),
@@ -919,6 +939,7 @@ impl Store {
             tagged.client_id,
             tagged.project_id,
             tagged.task_id,
+            category.as_deref(),
         )?;
 
         let conn = self.conn.lock().expect("store mutex poisoned");
@@ -951,8 +972,8 @@ impl Store {
             )?;
             conn.execute(
                 "INSERT INTO sessions (app_id, title, url, started_at, ended_at, idle,
-                 client_id, project_id, task_id, approved, manual, notes, confidence, pending)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                 client_id, project_id, task_id, approved, manual, notes, confidence, pending, category)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     row.app_id,
                     row.title,
@@ -968,6 +989,7 @@ impl Store {
                     row.notes,
                     row.confidence.map(|c| c as f64),
                     row.pending as i64,
+                    row.category,
                 ],
             )?;
             Ok(conn.last_insert_rowid())
@@ -1061,6 +1083,7 @@ fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
             .get::<_, Option<f64>>(17)?
             .map(|v| v as f32),
         pending: row.get::<_, Option<i64>>(18)?.unwrap_or(0) != 0,
+        category: row.get(19)?,
     })
 }
 
@@ -1331,7 +1354,7 @@ impl Store {
                 "SELECT s.id, s.app_id, a.name, s.title, s.url, s.started_at, s.ended_at, s.idle,
                         s.client_id, s.project_id, s.task_id,
                         c.name, p.name, t.name,
-                        s.approved, s.manual, s.notes, s.confidence, s.pending
+                        s.approved, s.manual, s.notes, s.confidence, s.pending, s.category
                  FROM sessions s
                  LEFT JOIN apps a ON a.id = s.app_id
                  LEFT JOIN clients c ON c.id = s.client_id
@@ -1463,6 +1486,7 @@ impl Store {
             active.project_id,
             active.task_id,
             Some("Focus session"),
+            Some("Focus"),
         );
         let conn = self.conn.lock().expect("store mutex poisoned");
         let row = conn.query_row(
@@ -1552,6 +1576,27 @@ impl Store {
             for r in rows {
                 out.push(r?);
             }
+        }
+        Ok(out)
+    }
+
+    pub fn list_activity_events_in_range(
+        &self,
+        started_at: &str,
+        ended_at: &str,
+        limit: i64,
+    ) -> Result<Vec<ActivityEvent>> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let lim = limit.clamp(1, 2000);
+        let mut stmt = conn.prepare(
+            "SELECT id, app_name, title, url, recorded_at FROM activity_events
+             WHERE recorded_at >= ?1 AND recorded_at <= ?2
+             ORDER BY recorded_at ASC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![started_at, ended_at, lim], map_activity_row)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
         }
         Ok(out)
     }
@@ -1766,16 +1811,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let store = Store::open(dir.join("t.db")).unwrap();
-        assert!(store.schema_version().unwrap() >= 5);
+        assert!(store.schema_version().unwrap() >= 6);
         let app = store.upsert_app("Code", None).unwrap();
         let id = store
-            .start_session(app, Some("hello"), None, "2026-09-05T09:00:00", false, None, false)
+            .start_session(
+                app,
+                Some("hello"),
+                None,
+                "2026-09-05T09:00:00",
+                false,
+                None,
+                false,
+                Some("Code"),
+            )
             .unwrap();
         store
             .touch_session(id, "2026-09-05T09:15:00", false)
             .unwrap();
         let rows = store.sessions_for_day("2026-09-05").unwrap();
         assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].category.as_deref(), Some("Code"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

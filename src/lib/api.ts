@@ -6,6 +6,7 @@ export type TrackerInfo = {
   capture_ready: boolean;
   current_app: string | null;
   current_title: string | null;
+  live_session_id: number | null;
 };
 
 export type TrackerSettings = {
@@ -52,7 +53,18 @@ export type SessionRow = {
   notes: string | null;
   confidence: number | null;
   pending: boolean;
+  category: string | null;
 };
+
+export const SESSION_CATEGORIES = [
+  "Focus",
+  "Code",
+  "Meeting",
+  "Break",
+  "Other",
+] as const;
+
+export type SessionCategory = (typeof SESSION_CATEGORIES)[number];
 
 export type Task = {
   id: number;
@@ -310,6 +322,7 @@ export const api = {
     clientId: number | null;
     projectId: number | null;
     taskId: number | null;
+    category?: string | null;
   }) =>
     invoke<void>("update_session", {
       sessionId: payload.sessionId,
@@ -320,6 +333,7 @@ export const api = {
       clientId: payload.clientId,
       projectId: payload.projectId,
       taskId: payload.taskId,
+      category: payload.category ?? null,
     }),
   deleteSession: (sessionId: number) =>
     invoke<void>("delete_session", { sessionId }),
@@ -394,6 +408,16 @@ export const api = {
     invoke<ActivityEvent[]>("list_activity_events", {
       day,
       query: query ?? null,
+      limit: limit ?? 500,
+    }),
+  listActivityEventsInRange: (
+    startedAt: string,
+    endedAt: string,
+    limit?: number,
+  ) =>
+    invoke<ActivityEvent[]>("list_activity_events_in_range", {
+      startedAt,
+      endedAt,
       limit: limit ?? 500,
     }),
   deleteActivityEvent: (id: number) =>

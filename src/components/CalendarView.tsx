@@ -62,6 +62,7 @@ type Props = {
   onOpenManual: () => void;
   onMerge: () => void;
   onRangeLabelChange?: (label: string) => void;
+  liveSessionId?: number | null;
   error: string | null;
 };
 
@@ -108,6 +109,7 @@ export function CalendarView({
   onOpenManual,
   onMerge,
   onRangeLabelChange,
+  liveSessionId = null,
   error,
 }: Props) {
   const [range, setRange] = useState<CalRange>("day");
@@ -295,6 +297,7 @@ export function CalendarView({
           isToday={day === todayLocal()}
           showActivity={showActivityCol}
           showFocus={showFocusCol}
+          liveSessionId={liveSessionId}
         />
       )}
 
@@ -333,6 +336,7 @@ function DayDualCalendar({
   isToday,
   showActivity,
   showFocus,
+  liveSessionId,
 }: {
   activitySessions: SessionRow[];
   focusSessions: FocusSession[];
@@ -343,6 +347,7 @@ function DayDualCalendar({
   isToday: boolean;
   showActivity: boolean;
   showFocus: boolean;
+  liveSessionId: number | null;
 }) {
   const hours = Array.from(
     { length: DAY_END_HOUR - DAY_START_HOUR + 1 },
@@ -362,19 +367,50 @@ function DayDualCalendar({
     onSelect(session, e.metaKey || e.ctrlKey || e.shiftKey);
   }
 
+  const liveSession = useMemo(
+    () =>
+      liveSessionId != null
+        ? (allSessions.find((s) => s.id === liveSessionId) ?? null)
+        : null,
+    [allSessions, liveSessionId],
+  );
+
+  const [liveTick, setLiveTick] = useState(0);
+  useEffect(() => {
+    if (!liveSessionId) return;
+    const id = window.setInterval(() => setLiveTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [liveSessionId]);
+
   const activityBlocks = useMemo(() => {
-    const spans: TimedSpan[] = activitySessions.map((s) => ({
-      id: `a-${s.id}`,
-      started_at: s.started_at,
-      ended_at: s.ended_at,
-      label: activityLabel(s),
-      color: ACTIVITY_COLOR,
-      sessionId: s.id,
-      pending: s.pending,
-    }));
+    const spans: TimedSpan[] = activitySessions
+      .filter((s) => s.id !== liveSessionId)
+      .map((s) => ({
+        id: `a-${s.id}`,
+        started_at: s.started_at,
+        ended_at: s.ended_at,
+        label: activityLabel(s),
+        color: ACTIVITY_COLOR,
+        sessionId: s.id,
+        pending: s.pending,
+      }));
     const merged = coalesceSpans(spans, (s) => s.label.toLowerCase());
     return layoutBlocks(merged, DAY_START_HOUR, HOUR_HEIGHT);
-  }, [activitySessions]);
+  }, [activitySessions, liveSessionId]);
+
+  const trackingBlock = useMemo(() => {
+    if (!liveSession || liveSession.idle) return null;
+    const span: TimedSpan = {
+      id: `live-${liveSession.id}`,
+      started_at: liveSession.started_at,
+      ended_at: null,
+      label: "Tracking…",
+      color: ACTIVITY_COLOR,
+      sessionId: liveSession.id,
+      pending: liveSession.pending,
+    };
+    return layoutBlocks([span], DAY_START_HOUR, HOUR_HEIGHT)[0] ?? null;
+  }, [liveSession, liveTick]);
 
   const sessionBlocks = useMemo(() => {
     const focusSpans: TimedSpan[] = focusSessions.map((f) => ({
@@ -384,15 +420,17 @@ function DayDualCalendar({
       label: f.goal?.trim() || "Focus",
       color: FOCUS_COLOR,
     }));
-    const breakSpans: TimedSpan[] = breakSessions.map((s) => ({
-      id: `b-${s.id}`,
-      started_at: s.started_at,
-      ended_at: s.ended_at,
-      label: "Break",
-      color: BREAK_COLOR,
-      sessionId: s.id,
-      idle: true,
-    }));
+    const breakSpans: TimedSpan[] = breakSessions
+      .filter((s) => s.id !== liveSessionId)
+      .map((s) => ({
+        id: `b-${s.id}`,
+        started_at: s.started_at,
+        ended_at: s.ended_at,
+        label: "Break",
+        color: BREAK_COLOR,
+        sessionId: s.id,
+        idle: true,
+      }));
     const mergedFocus = coalesceSpans(focusSpans, () => "focus");
     const mergedBreaks = coalesceSpans(breakSpans, () => "break");
     return layoutBlocks(
@@ -400,7 +438,7 @@ function DayDualCalendar({
       DAY_START_HOUR,
       HOUR_HEIGHT,
     );
-  }, [focusSessions, breakSessions]);
+  }, [focusSessions, breakSessions, liveSessionId]);
 
   const cols = (showActivity ? 1 : 0) + (showFocus ? 1 : 0) || 1;
 
@@ -450,7 +488,7 @@ function DayDualCalendar({
                     </span>
                   </div>
                 )}
-                {activityBlocks.length === 0 && (
+                {activityBlocks.length === 0 && !trackingBlock && (
                   <p className="empty-hint">No activity yet</p>
                 )}
                 {activityBlocks.map((b) => {
@@ -475,6 +513,20 @@ function DayDualCalendar({
                     </button>
                   );
                 })}
+                {trackingBlock && (
+                  <button
+                    type="button"
+                    className={`session-block activity tracking${selectedIds.includes(trackingBlock.sessionId!) ? " selected" : ""}`}
+                    style={blockStyle(trackingBlock)}
+                    title="Tracking… Click to review"
+                    onClick={(e) => pickSession(trackingBlock.sessionId, e)}
+                  >
+                    <div className="sb-title">Tracking…</div>
+                    <div className="sb-meta">
+                      {activityLabel(liveSession!)} · click to review
+                    </div>
+                  </button>
+                )}
               </div>
             </div>
           )}

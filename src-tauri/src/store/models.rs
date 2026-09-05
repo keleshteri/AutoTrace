@@ -71,6 +71,8 @@ pub struct SessionRow {
     pub notes: Option<String>,
     pub confidence: Option<f32>,
     pub pending: bool,
+    /// Focus | Code | Meeting | Break | Other
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

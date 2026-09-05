@@ -254,6 +254,7 @@ pub fn create_manual_session(
             project_id,
             task_id,
             notes.as_deref(),
+            None,
         )
         .map_err(|e| e.to_string())
 }
@@ -281,6 +282,7 @@ pub fn update_session(
     client_id: Option<i64>,
     project_id: Option<i64>,
     task_id: Option<i64>,
+    category: Option<String>,
 ) -> Result<(), String> {
     state
         .store
@@ -293,6 +295,7 @@ pub fn update_session(
             client_id,
             project_id,
             task_id,
+            category.as_deref(),
         )
         .map_err(|e| e.to_string())
 }
@@ -587,6 +590,19 @@ pub fn list_activity_events(
     state
         .store
         .list_activity_events(&day, query.as_deref(), limit.unwrap_or(500))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_activity_events_in_range(
+    state: State<'_, AppState>,
+    started_at: String,
+    ended_at: String,
+    limit: Option<i64>,
+) -> Result<Vec<crate::store::ActivityEvent>, String> {
+    state
+        .store
+        .list_activity_events_in_range(&started_at, &ended_at, limit.unwrap_or(500))
         .map_err(|e| e.to_string())
 }
 

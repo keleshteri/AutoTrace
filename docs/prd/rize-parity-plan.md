@@ -163,5 +163,10 @@ T1–T4  →  A1–A4  →  T5–T6  →  A5–A8  →  R1–R4  →  X*
 - [x] T5 Focus ends as calendar time entry; tray Start/End Focus
 - [x] A1–A3 Activity events + Activity Timeline (apps) + Event Log + detail actions
 - [x] A5–A8 Weekday schedule, URL/title privacy, exclude rules, redact titles/URLs
-- [ ] A4 Live “Tracking…” block polish (sessions already open live; UI affordance can deepen)
-- [ ] R1–R4 / X* later
+- [x] A4 Live “Tracking…” block on Calendar (live_session_id + hatched affordance)
+- [x] R1 Category layer (Focus / Code / Meeting / Break / Other) on sessions
+- [x] R2 Stronger auto-chunking (same-app sessions; title changes stay one block)
+- [x] R3 Review panel tabs: Details / Apps / Titles / Event log
+- [x] R4 Keyboard: **A** approve, **N** next pending, **Esc** close
+
+**Personal product (Phases 0–3 + Waves T/A/R): complete.** Phase 4 teams/cloud remains optional later.

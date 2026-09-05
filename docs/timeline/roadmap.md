@@ -6,6 +6,7 @@
 | 1 — MVP (local-only personal tracker) | Weeks 3-8 | Capture on Windows (+ Linux/dev), timeline UI, client/project/task tagging via rules, review/approve/merge/split, CSV export, privacy controls | Complete, useful, fully local product | **Done** |
 | 2 — Smart tagging + focus | Weeks 9-14 | Rule/heuristic tagging with confidence, calendar ICS opt-in, focus score + weekly digest, confirm-before-log | Reduces manual correction, adds wellness insight | **Done** |
 | 3 — Integrations | Weeks 15-22 | First PM-tool connector (ClickUp) fully opt-in, webhooks, local export API | Users who want it can push approved entries out | **Done** |
+| Rize Waves T/A/R | — | Timer, Activity, Calendar live Tracking, categories, review tabs, keyboard | Personal product parity complete | **Done** |
 | 4 — Teams (optional) | Weeks 23+ | Cloud sync/team workspace, only for users who opt in; utilization/profitability views | Agency use case, still privacy-gated | Not started |
 
 MVP (Phase 1) is a shippable, complete personal product on its own. Integrations and team features never block it and are never required to use the app.

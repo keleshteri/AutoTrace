@@ -77,6 +77,7 @@ pub fn run() {
             commands::end_focus,
             commands::list_focus_for_day,
             commands::list_activity_events,
+            commands::list_activity_events_in_range,
             commands::delete_activity_event,
             commands::activity_app_breakdown,
             commands::redact_activity_metadata,

@@ -191,7 +191,24 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('schedule_json', '');
 UPDATE settings SET value = '5' WHERE key = 'schema_version';
 "#;
 
-pub const SCHEMA_VERSION: i64 = 5;
+const MIGRATION_V6: &str = r#"
+ALTER TABLE sessions ADD COLUMN category TEXT;
+
+UPDATE sessions SET category = 'Break' WHERE idle = 1 AND category IS NULL;
+UPDATE sessions SET category = 'Focus' WHERE notes = 'Focus session' AND category IS NULL;
+UPDATE sessions SET category = 'Meeting'
+ WHERE category IS NULL AND (
+   lower(IFNULL(title,'')) LIKE '%meet%'
+   OR lower(IFNULL(title,'')) LIKE '%zoom%'
+   OR lower(IFNULL(title,'')) LIKE '%teams%'
+   OR lower(IFNULL(title,'')) LIKE '%call%'
+ );
+UPDATE sessions SET category = 'Other' WHERE category IS NULL;
+
+UPDATE settings SET value = '6' WHERE key = 'schema_version';
+"#;
+
+pub const SCHEMA_VERSION: i64 = 6;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i64 = conn
@@ -229,6 +246,14 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 5 {
         let _ = conn.execute_batch(MIGRATION_V5);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '5')
+             ON CONFLICT(key) DO UPDATE SET value = '5'",
+            [],
+        )?;
+    }
+    if current < 6 {
+        let _ = conn.execute_batch(MIGRATION_V6);
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

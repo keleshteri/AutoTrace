@@ -103,6 +103,57 @@ fn heuristic_app_guess(app_name: &str, title_l: &str) -> Option<TagSuggestion> {
     None
 }
 
+/// Infer a Rize-style category orthogonal to client/project/task.
+pub fn infer_category(
+    idle: bool,
+    app_name: &str,
+    title: Option<&str>,
+    url: Option<&str>,
+    notes: Option<&str>,
+) -> &'static str {
+    if idle {
+        return "Break";
+    }
+    if notes
+        .map(|n| n.eq_ignore_ascii_case("Focus session"))
+        .unwrap_or(false)
+        || title.map(|t| t.eq_ignore_ascii_case("focus")).unwrap_or(false)
+    {
+        return "Focus";
+    }
+
+    let blob = format!(
+        "{} {} {}",
+        app_name.to_lowercase(),
+        title.unwrap_or("").to_lowercase(),
+        url.unwrap_or("").to_lowercase()
+    );
+
+    const MEETING: &[&str] = &[
+        "zoom", "meet.google", "teams", "webex", "slack huddle", "facetime",
+        "skype", "whereby", "around.co", "meeting", "standup",
+    ];
+    if MEETING.iter().any(|k| blob.contains(k))
+        || blob.contains(" call")
+        || blob.starts_with("call ")
+    {
+        return "Meeting";
+    }
+
+    const CODE: &[&str] = &[
+        "cursor", "code.exe", "code -", "visual studio", "jetbrains", "idea64",
+        "webstorm", "pycharm", "goland", "clion", "rider", "android studio",
+        "xcode", "terminal", "windows terminal", "powershell", "cmd.exe",
+        "iterm", "warp", "alacritty", "kitty", "vim", "nvim", "emacs",
+        "sublime", "notepad++", "github desktop", "gitkraken",
+    ];
+    if CODE.iter().any(|k| blob.contains(k)) {
+        return "Code";
+    }
+
+    "Other"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +209,22 @@ mod tests {
         ];
         let hit = suggest_with_rules(&rules, "App", Some("Design work"), None).unwrap();
         assert_eq!(hit.project_id, Some(9));
+    }
+
+    #[test]
+    fn infers_categories() {
+        assert_eq!(infer_category(true, "Idle", Some("Idle"), None, None), "Break");
+        assert_eq!(
+            infer_category(false, "Zoom", Some("Weekly call"), None, None),
+            "Meeting"
+        );
+        assert_eq!(
+            infer_category(false, "Cursor.exe", Some("main.rs"), None, None),
+            "Code"
+        );
+        assert_eq!(
+            infer_category(false, "App", Some("Focus"), None, Some("Focus session")),
+            "Focus"
+        );
     }
 }

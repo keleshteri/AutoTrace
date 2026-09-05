@@ -36,7 +36,6 @@ const APP_ALIASES: Record<string, string> = {
   "docker desktop.exe": "Docker Desktop",
   "docker desktop": "Docker Desktop",
   "rize.exe": "Rize",
-  "autotrace.exe": "AutoTrace",
   "devenv.exe": "Visual Studio",
   "idea64.exe": "IntelliJ IDEA",
   "webstorm64.exe": "WebStorm",

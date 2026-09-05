@@ -133,6 +133,74 @@ function App() {
     }
   }
 
+  async function approveSelectedOrPending() {
+    try {
+      if (selected?.pending) {
+        await api.approveSession(selected.id, true);
+        await refreshDay();
+        return;
+      }
+      const pending = await api.listPendingSessions();
+      if (pending.length === 0) return;
+      const next = pending[0];
+      await api.approveSession(next.id, true);
+      await refreshDay();
+      setSelectedIds([next.id]);
+      setNav("calendar");
+      setDay(next.started_at.slice(0, 10));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function jumpNextPending() {
+    try {
+      const pending = await api.listPendingSessions();
+      if (pending.length === 0) {
+        setSelectedIds([]);
+        return;
+      }
+      const current = selectedIds[0];
+      const idx = pending.findIndex((p) => p.id === current);
+      const next = pending[(idx + 1) % pending.length] ?? pending[0];
+      setNav("calendar");
+      setDay(next.started_at.slice(0, 10));
+      setSelectedIds([next.id]);
+      await refreshDay();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === "Escape" && selectedIds.length) {
+        setSelectedIds([]);
+        return;
+      }
+      if (nav !== "calendar" && nav !== "focus") return;
+      if (e.key === "a" || e.key === "A") {
+        e.preventDefault();
+        void approveSelectedOrPending();
+      } else if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        void jumpNextPending();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [nav, selectedIds, selected]);
+
   const showSummary = nav === "calendar";
 
   return (
@@ -191,6 +259,7 @@ function App() {
                 onOpenManual={() => setShowManual(true)}
                 onMerge={() => void mergeSelected()}
                 onRangeLabelChange={setCalRangeLabel}
+                liveSessionId={status?.tracker.live_session_id ?? null}
                 error={error}
               />
 
@@ -215,6 +284,7 @@ function App() {
                       clientId: payload.clientId,
                       projectId: payload.projectId,
                       taskId: payload.taskId,
+                      category: payload.category,
                     })
                   }
                   onSplit={(at) =>
