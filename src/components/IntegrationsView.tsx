@@ -275,6 +275,23 @@ export function IntegrationsView({ onError }: Props) {
       })}
 
       <div className="card" style={{ marginBottom: 12 }}>
+        <p className="kicker">OAuth &amp; live calendars</p>
+        <p className="muted">
+          Paste your OAuth client ID/secret from the provider console. Redirect URI example:{" "}
+          <code>http://127.0.0.1:17891/callback</code>
+        </p>
+        <OauthPanel onError={onError} setMsg={setMsg} />
+      </div>
+
+      <div className="card" style={{ marginBottom: 12 }}>
+        <p className="kicker">MCP (via local API)</p>
+        <p className="muted">
+          Enable Local export API, then <code>GET /v1/mcp/tools</code> and{" "}
+          <code>POST /v1/mcp</code> with JSON {"{"}&quot;tool&quot;:&quot;day_report&quot;,&quot;arguments&quot;:{"{"}&quot;day&quot;:&quot;YYYY-MM-DD&quot;{"}"}{"}"}.
+        </p>
+      </div>
+
+      <div className="card" style={{ marginBottom: 12 }}>
         <p className="kicker">Eligible to sync ({eligible.length})</p>
         <p className="muted">Approved + tagged + ended sessions.</p>
         <ul className="tree" style={{ marginTop: 8 }}>
@@ -300,6 +317,112 @@ export function IntegrationsView({ onError }: Props) {
           ))}
           {logs.length === 0 && <li className="muted">No sync attempts yet.</li>}
         </ul>
+      </div>
+    </div>
+  );
+}
+
+function OauthPanel({
+  onError,
+  setMsg,
+}: {
+  onError: (m: string | null) => void;
+  setMsg: (m: string | null) => void;
+}) {
+  const [provider, setProvider] = useState("google");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [redirect, setRedirect] = useState("http://127.0.0.1:17891/callback");
+  const [code, setCode] = useState("");
+  const [day, setDay] = useState(() => new Date().toISOString().slice(0, 10));
+
+  return (
+    <div className="mini-form" style={{ marginTop: 10, display: "grid", gap: 8 }}>
+      <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+        <option value="google">Google Calendar</option>
+        <option value="outlook">Outlook Calendar</option>
+        <option value="clickup">ClickUp OAuth</option>
+      </select>
+      <input
+        placeholder="Client ID"
+        value={clientId}
+        onChange={(e) => setClientId(e.target.value)}
+      />
+      <input
+        placeholder="Client secret"
+        type="password"
+        value={clientSecret}
+        onChange={(e) => setClientSecret(e.target.value)}
+      />
+      <input
+        placeholder="Redirect URI"
+        value={redirect}
+        onChange={(e) => setRedirect(e.target.value)}
+      />
+      <button
+        type="button"
+        className="btn"
+        onClick={() =>
+          void api
+            .oauthAuthorizeUrl(provider, clientId, redirect)
+            .then((url) => {
+              window.open(url, "_blank");
+              setMsg("Browser opened — paste the auth code below");
+            })
+            .catch((e) => onError(String(e)))
+        }
+      >
+        Open authorize URL
+      </button>
+      <input
+        placeholder="Authorization code"
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+      />
+      <button
+        type="button"
+        className="primary"
+        onClick={() =>
+          void api
+            .oauthExchangeCode({
+              provider,
+              clientId,
+              clientSecret,
+              redirectUri: redirect,
+              code,
+            })
+            .then((r) => setMsg(r))
+            .catch((e) => onError(String(e)))
+        }
+      >
+        Exchange code
+      </button>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
+        <button
+          type="button"
+          className="btn"
+          onClick={() =>
+            void api
+              .syncGoogleCalendar(day)
+              .then((n) => setMsg(`Imported ${n} Google events`))
+              .catch((e) => onError(String(e)))
+          }
+        >
+          Sync Google day
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() =>
+            void api
+              .syncOutlookCalendar(day)
+              .then((n) => setMsg(`Imported ${n} Outlook events`))
+              .catch((e) => onError(String(e)))
+          }
+        >
+          Sync Outlook day
+        </button>
       </div>
     </div>
   );

@@ -22,7 +22,24 @@ pub fn suggest(
     url: Option<&str>,
 ) -> Option<TagSuggestion> {
     let rules = store.list_rules().ok()?;
-    suggest_with_rules(&rules, app_name, title, url)
+    if let Some(hit) = suggest_with_rules(&rules, app_name, title, url) {
+        return Some(hit);
+    }
+    let ml_on = store
+        .get_setting("ml_tagging")
+        .ok()
+        .flatten()
+        .map(|v| v != "0")
+        .unwrap_or(true);
+    if ml_on {
+        ml_keyword_suggest(
+            app_name,
+            &title.unwrap_or("").to_lowercase(),
+            &url.unwrap_or("").to_lowercase(),
+        )
+    } else {
+        None
+    }
 }
 
 pub fn suggest_with_rules(
@@ -66,6 +83,49 @@ pub fn suggest_with_rules(
 
     // Phase 2 heuristic: weak app-name echo when no rule hits.
     heuristic_app_guess(app_name, &title_l)
+}
+
+fn ml_keyword_suggest(app_name: &str, title_l: &str, url_l: &str) -> Option<TagSuggestion> {
+    let blob = format!("{} {} {}", app_name.to_lowercase(), title_l, url_l);
+    let banks: &[(&str, &[&str], f32)] = &[
+        (
+            "code",
+            &[
+                "github", "gitlab", "pull request", "stack overflow", "localhost", "rust",
+                "typescript", "python", "refactor", "compile", "cargo", "npm",
+            ],
+            0.42,
+        ),
+        (
+            "meeting",
+            &["agenda", "standup", "sync", "1:1", "interview", "webinar"],
+            0.4,
+        ),
+        (
+            "docs",
+            &["notion", "confluence", "google docs", "readme", "specification"],
+            0.38,
+        ),
+    ];
+    let mut best: Option<(f32, &'static str)> = None;
+    for (label, keys, base) in banks {
+        let hits = keys.iter().filter(|k| blob.contains(*k)).count();
+        if hits == 0 {
+            continue;
+        }
+        let score = (base + hits as f32 * 0.05).min(0.7);
+        if best.map(|(s, _)| score > s).unwrap_or(true) {
+            best = Some((score, label));
+        }
+    }
+    best.map(|(confidence, _)| TagSuggestion {
+        client_id: None,
+        project_id: None,
+        task_id: None,
+        rule_id: None,
+        confidence,
+        source: "ml_local",
+    })
 }
 
 fn match_confidence(haystack: &str, pattern: &str) -> Option<f32> {

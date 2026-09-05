@@ -7,6 +7,7 @@ import { WorkView } from "./components/WorkView";
 import { SettingsView } from "./components/SettingsView";
 import { RulesView } from "./components/RulesView";
 import { ReportsView } from "./components/ReportsView";
+import { ProfitView, TeamsView } from "./components/ProfitView";
 import { FocusView } from "./components/FocusView";
 import { IntegrationsView } from "./components/IntegrationsView";
 import { TimerView } from "./components/TimerView";
@@ -314,6 +315,8 @@ function App() {
 
           {nav === "rules" && <RulesView onError={setError} />}
           {nav === "reports" && <ReportsView onError={setError} />}
+          {nav === "profit" && <ProfitView onError={setError} />}
+          {nav === "teams" && <TeamsView onError={setError} />}
           {nav === "integrations" && <IntegrationsView onError={setError} />}
 
           {nav === "settings" && (

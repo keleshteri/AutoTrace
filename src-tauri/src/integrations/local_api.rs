@@ -1,6 +1,6 @@
 //! Localhost export API — token-gated, 127.0.0.1 only. Off by default.
 
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -88,7 +88,7 @@ impl LocalApiHandle {
 
         let handle = thread::spawn(move || {
             while running.load(Ordering::SeqCst) {
-                let request = match server.recv_timeout(std::time::Duration::from_millis(400)) {
+                let mut request = match server.recv_timeout(std::time::Duration::from_millis(400)) {
                     Ok(Some(r)) => r,
                     Ok(None) => continue,
                     Err(_) => break,
@@ -112,11 +112,25 @@ impl LocalApiHandle {
                     (Method::Get, path) if path.starts_with("/v1/export/") => {
                         handle_export_day(&store, path)
                     }
+                    (Method::Get, "/v1/mcp/tools") => json_response(
+                        200,
+                        serde_json::json!({
+                            "tools": [
+                                {"name": "list_sessions", "description": "List approved exportable sessions for a day", "input": {"day": "YYYY-MM-DD"}},
+                                {"name": "day_report", "description": "Aggregated day report", "input": {"day": "YYYY-MM-DD"}},
+                                {"name": "profitability", "description": "Utilization and revenue for a range", "input": {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}},
+                                {"name": "export_sync_pack", "description": "Export hierarchy sync pack JSON"}
+                            ]
+                        }),
+                    ),
+                    (Method::Post, "/v1/mcp") | (Method::Post, "/v1/mcp/call") => {
+                        handle_mcp(&store, &mut request)
+                    }
                     _ => json_response(
                         404,
                         serde_json::json!({
                             "error": "not_found",
-                            "endpoints": ["/health", "/v1/sessions?day=YYYY-MM-DD", "/v1/export/YYYY-MM-DD"]
+                            "endpoints": ["/health", "/v1/sessions?day=", "/v1/export/YYYY-MM-DD", "/v1/mcp/tools", "POST /v1/mcp"]
                         }),
                     ),
                 };
@@ -239,6 +253,58 @@ fn handle_export_day(store: &Store, path: &str) -> Response<Cursor<Vec<u8>>> {
             resp
         }
         Err(e) => json_response(500, serde_json::json!({"error": e.to_string()})),
+    }
+}
+
+fn handle_mcp(store: &Store, request: &mut tiny_http::Request) -> Response<Cursor<Vec<u8>>> {
+    let mut body = String::new();
+    // tiny_http Request as_reader
+    request.as_reader().read_to_string(&mut body).ok();
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::json!({}));
+    let tool = parsed
+        .get("tool")
+        .or_else(|| parsed.get("name"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    let args = parsed.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+
+    match tool {
+        "list_sessions" => {
+            let day = args.get("day").and_then(|d| d.as_str());
+            let entries = store.eligible_export_entries(None).unwrap_or_default();
+            let filtered: Vec<_> = entries
+                .into_iter()
+                .filter(|e| day.map(|d| e.started_at.starts_with(d)).unwrap_or(true))
+                .map(|e| crate::integrations::entry_json(&e))
+                .collect();
+            json_response(200, serde_json::json!({"ok": true, "result": filtered}))
+        }
+        "day_report" => {
+            let day = args.get("day").and_then(|d| d.as_str()).unwrap_or("");
+            match store.day_report(day) {
+                Ok(r) => json_response(200, serde_json::json!({"ok": true, "result": r})),
+                Err(e) => json_response(500, serde_json::json!({"error": e.to_string()})),
+            }
+        }
+        "profitability" => {
+            let from = args.get("from").and_then(|d| d.as_str()).unwrap_or("");
+            let to = args.get("to").and_then(|d| d.as_str()).unwrap_or(from);
+            match store.profitability_report(from, to) {
+                Ok(r) => json_response(200, serde_json::json!({"ok": true, "result": r})),
+                Err(e) => json_response(500, serde_json::json!({"error": e.to_string()})),
+            }
+        }
+        "export_sync_pack" => match store.export_sync_pack() {
+            Ok(s) => json_response(
+                200,
+                serde_json::json!({"ok": true, "result": serde_json::from_str::<serde_json::Value>(&s).unwrap_or(serde_json::json!({}))}),
+            ),
+            Err(e) => json_response(500, serde_json::json!({"error": e.to_string()})),
+        },
+        _ => json_response(
+            400,
+            serde_json::json!({"error": "unknown_tool", "hint": "GET /v1/mcp/tools"}),
+        ),
     }
 }
 

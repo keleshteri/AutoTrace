@@ -36,24 +36,33 @@ Frontend-only (no Rust IPC):
 pnpm dev
 ```
 
-## Build
+## Build (this machine only)
 
 ```bash
 pnpm tauri:build
+# or
+pnpm release:local
 ```
+
+## Downloads (Windows / Linux / macOS)
+
+Prefer **GitHub Releases** so all three platforms are built in CI:
+
+1. Push a version tag: `git tag v0.1.0 && git push origin v0.1.0`
+2. **Actions → Release** builds NSIS/MSI, AppImage/deb, and macOS DMGs
+3. Installers appear under [Releases](https://github.com/keleshteri/AutoTrace/releases)
+
+Details: [docs/release.md](docs/release.md).
 
 ## Project layout
 
 ```
 docs/           Product / architecture / privacy docs
-src/            React UI (timeline, projects, status)
-src-tauri/      Rust backend
-  src/store/    SQLite schema + CRUD
-  src/tracker/  ~1s foreground capture (Windows Win32; Linux via xdotool)
-  src/tray.rs   System tray menu
-  src/tagger/   Rules engine (stub)
-  src/commands.rs
-.github/        CI stubs
+src/            React UI (calendar, projects, reports, settings)
+src-tauri/      Rust backend (store, tracker, tagger, vault, integrations)
+sync-server/    Optional local-first sync helper
+.github/        CI + multi-OS release workflow
+scripts/        Local release helper
 ```
 
 ## Privacy defaults
@@ -65,4 +74,4 @@ src-tauri/      Rust backend
 
 ## Current phase
 
-**Phase 1 — MVP in progress**: tray + capture + timeline + client/project/task CRUD. Still to do: rules auto-tagging, review/approve, reports, CSV, privacy page, launch-at-login (see [roadmap](docs/timeline/roadmap.md)).
+**Phases 0–4 + Rize waves done** for the personal product. See [roadmap](docs/timeline/roadmap.md). Shipping: tag a release for multi-OS installers.

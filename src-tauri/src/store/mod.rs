@@ -170,7 +170,7 @@ impl Store {
             "SELECT s.id, s.app_id, a.name, s.title, s.url, s.started_at, s.ended_at, s.idle,
                     s.client_id, s.project_id, s.task_id,
                     c.name, p.name, t.name,
-                    s.approved, s.manual, s.notes, s.confidence, s.pending, s.category
+                    s.approved, s.manual, s.notes, s.confidence, s.pending, s.category, s.billable
              FROM sessions s
              LEFT JOIN apps a ON a.id = s.app_id
              LEFT JOIN clients c ON c.id = s.client_id
@@ -198,6 +198,7 @@ impl Store {
             name: name.to_string(),
             color: color.map(str::to_string),
             archived: false,
+            hourly_rate: None,
         })
     }
 
@@ -219,6 +220,8 @@ impl Store {
             name: name.to_string(),
             color: color.map(str::to_string),
             archived: false,
+            hourly_rate: None,
+            budget_hours: None,
         })
     }
 
@@ -257,24 +260,24 @@ impl Store {
         let conn = self.conn.lock().expect("store mutex poisoned");
 
         let mut clients_stmt = conn.prepare(
-            "SELECT id, name, color FROM clients WHERE archived = 0 ORDER BY name COLLATE NOCASE",
+            "SELECT id, name, color, hourly_rate FROM clients WHERE archived = 0 ORDER BY name COLLATE NOCASE",
         )?;
-        let clients: Vec<(i64, String, Option<String>)> = clients_stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        let clients: Vec<(i64, String, Option<String>, Option<f64>)> = clients_stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let mut nodes = Vec::new();
-        for (cid, cname, ccolor) in clients {
+        for (cid, cname, ccolor, crate_) in clients {
             let mut projects_stmt = conn.prepare(
-                "SELECT id, name, color FROM projects
+                "SELECT id, name, color, hourly_rate, budget_hours FROM projects
                  WHERE client_id = ?1 AND archived = 0 ORDER BY name COLLATE NOCASE",
             )?;
-            let projects: Vec<(i64, String, Option<String>)> = projects_stmt
-                .query_map(params![cid], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            let projects: Vec<(i64, String, Option<String>, Option<f64>, Option<f64>)> = projects_stmt
+                .query_map(params![cid], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
 
             let mut project_nodes = Vec::new();
-            for (pid, pname, pcolor) in projects {
+            for (pid, pname, pcolor, prate, pbudget) in projects {
                 let mut tasks_stmt = conn.prepare(
                     "SELECT id, project_id, name, archived FROM tasks
                      WHERE project_id = ?1 AND archived = 0 ORDER BY name COLLATE NOCASE",
@@ -294,6 +297,8 @@ impl Store {
                     id: pid,
                     name: pname,
                     color: pcolor,
+                    hourly_rate: prate,
+                    budget_hours: pbudget,
                     tasks,
                 });
             }
@@ -302,6 +307,7 @@ impl Store {
                 id: cid,
                 name: cname,
                 color: ccolor,
+                hourly_rate: crate_,
                 projects: project_nodes,
             });
         }
@@ -638,7 +644,7 @@ impl Store {
             "SELECT s.id, s.app_id, a.name, s.title, s.url, s.started_at, s.ended_at, s.idle,
                     s.client_id, s.project_id, s.task_id,
                     c.name, p.name, t.name,
-                    s.approved, s.manual, s.notes, s.confidence, s.pending, s.category
+                    s.approved, s.manual, s.notes, s.confidence, s.pending, s.category, s.billable
              FROM sessions s
              LEFT JOIN apps a ON a.id = s.app_id
              LEFT JOIN clients c ON c.id = s.client_id
@@ -835,7 +841,7 @@ impl Store {
                 "SELECT s.id, s.app_id, a.name, s.title, s.url, s.started_at, s.ended_at, s.idle,
                         s.client_id, s.project_id, s.task_id,
                         c.name, p.name, t.name,
-                        s.approved, s.manual, s.notes, s.confidence, s.pending, s.category
+                        s.approved, s.manual, s.notes, s.confidence, s.pending, s.category, s.billable
                  FROM sessions s
                  LEFT JOIN apps a ON a.id = s.app_id
                  LEFT JOIN clients c ON c.id = s.client_id
@@ -1084,6 +1090,7 @@ fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
             .map(|v| v as f32),
         pending: row.get::<_, Option<i64>>(18)?.unwrap_or(0) != 0,
         category: row.get(19)?,
+        billable: row.get::<_, Option<i64>>(20)?.unwrap_or(1) != 0,
     })
 }
 
@@ -1354,7 +1361,7 @@ impl Store {
                 "SELECT s.id, s.app_id, a.name, s.title, s.url, s.started_at, s.ended_at, s.idle,
                         s.client_id, s.project_id, s.task_id,
                         c.name, p.name, t.name,
-                        s.approved, s.manual, s.notes, s.confidence, s.pending, s.category
+                        s.approved, s.manual, s.notes, s.confidence, s.pending, s.category, s.billable
                  FROM sessions s
                  LEFT JOIN apps a ON a.id = s.app_id
                  LEFT JOIN clients c ON c.id = s.client_id
@@ -1647,6 +1654,378 @@ impl Store {
         let b = conn.execute("UPDATE sessions SET title = NULL, url = NULL", [])?;
         Ok((a + b) as i64)
     }
+
+    // —— Phase 4: rates, profitability, workspaces, block rules ——
+
+    pub fn insert_calendar_event(
+        &self,
+        title: &str,
+        started_at: &str,
+        ended_at: &str,
+        source: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute(
+            "INSERT INTO calendar_events (title, started_at, ended_at, source) VALUES (?1, ?2, ?3, ?4)",
+            params![title, started_at, ended_at, source],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+
+    pub fn set_client_rate(&self, client_id: i64, hourly_rate: Option<f64>) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute(
+            "UPDATE clients SET hourly_rate = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![hourly_rate, client_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_project_rate(
+        &self,
+        project_id: i64,
+        hourly_rate: Option<f64>,
+        budget_hours: Option<f64>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute(
+            "UPDATE projects SET hourly_rate = ?1, budget_hours = ?2, updated_at = datetime('now') WHERE id = ?3",
+            params![hourly_rate, budget_hours, project_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_session_billable(&self, session_id: i64, billable: bool) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute(
+            "UPDATE sessions SET billable = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![billable as i64, session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn profitability_report(&self, from_day: &str, to_day: &str) -> Result<ProfitabilityReport> {
+        use std::collections::HashMap;
+        let start = format!("{from_day}T00:00:00");
+        let end = format!("{to_day}T23:59:59");
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT s.started_at, s.ended_at, s.idle, s.billable,
+                    s.client_id, s.project_id, c.name, p.name,
+                    COALESCE(p.hourly_rate, c.hourly_rate, 0)
+             FROM sessions s
+             LEFT JOIN clients c ON c.id = s.client_id
+             LEFT JOIN projects p ON p.id = s.project_id
+             WHERE s.started_at <= ?2 AND IFNULL(s.ended_at, s.started_at) >= ?1",
+        )?;
+        let rows: Vec<(String, Option<String>, i64, i64, Option<i64>, Option<i64>, Option<String>, Option<String>, f64)> =
+            stmt.query_map(params![start, end], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get::<_, Option<i64>>(3)?.unwrap_or(1),
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut tracked = 0i64;
+        let mut billable_mins = 0i64;
+        let mut by_client: HashMap<String, ProfitRow> = HashMap::new();
+        let mut by_project: HashMap<String, ProfitRow> = HashMap::new();
+        let mut revenue = 0.0;
+
+        for (started, ended, idle, billable, cid, pid, cname, pname, rate) in rows {
+            let mins = session_minutes(&started, ended.as_deref());
+            if idle != 0 {
+                continue;
+            }
+            tracked += mins;
+            let is_billable = billable != 0 && (cid.is_some() || pid.is_some());
+            if is_billable {
+                billable_mins += mins;
+                let rev = (mins as f64 / 60.0) * rate;
+                revenue += rev;
+                let ckey = cid.map(|id| id.to_string()).unwrap_or_else(|| "untagged".into());
+                let clabel = cname.unwrap_or_else(|| "Untagged".into());
+                let entry = by_client.entry(ckey.clone()).or_insert(ProfitRow {
+                    key: ckey,
+                    label: clabel,
+                    minutes: 0,
+                    billable_minutes: 0,
+                    rate,
+                    revenue: 0.0,
+                });
+                entry.minutes += mins;
+                entry.billable_minutes += mins;
+                entry.revenue += rev;
+                if rate > entry.rate {
+                    entry.rate = rate;
+                }
+
+                let pkey = pid.map(|id| id.to_string()).unwrap_or_else(|| "untagged".into());
+                let plabel = pname.unwrap_or_else(|| "Untagged".into());
+                let entry = by_project.entry(pkey.clone()).or_insert(ProfitRow {
+                    key: pkey,
+                    label: plabel,
+                    minutes: 0,
+                    billable_minutes: 0,
+                    rate,
+                    revenue: 0.0,
+                });
+                entry.minutes += mins;
+                entry.billable_minutes += mins;
+                entry.revenue += rev;
+                if rate > entry.rate {
+                    entry.rate = rate;
+                }
+            }
+        }
+
+        let capacity_hours: f64 = self
+            .get_setting("capacity_hours_week")?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(40.0);
+        // Approximate capacity for range as weeks * capacity
+        let days = {
+            let a = chrono::NaiveDate::parse_from_str(from_day, "%Y-%m-%d").ok();
+            let b = chrono::NaiveDate::parse_from_str(to_day, "%Y-%m-%d").ok();
+            match (a, b) {
+                (Some(a), Some(b)) => (b - a).num_days().max(0) + 1,
+                _ => 7,
+            }
+        };
+        let capacity_minutes = ((capacity_hours / 7.0) * days as f64 * 60.0).round() as i64;
+        let utilization_pct = if capacity_minutes > 0 {
+            (tracked as f32 / capacity_minutes as f32) * 100.0
+        } else {
+            0.0
+        };
+
+        let mut by_client: Vec<_> = by_client.into_values().collect();
+        by_client.sort_by(|a, b| b.revenue.partial_cmp(&a.revenue).unwrap_or(std::cmp::Ordering::Equal));
+        let mut by_project: Vec<_> = by_project.into_values().collect();
+        by_project.sort_by(|a, b| b.revenue.partial_cmp(&a.revenue).unwrap_or(std::cmp::Ordering::Equal));
+
+        Ok(ProfitabilityReport {
+            from_day: from_day.into(),
+            to_day: to_day.into(),
+            tracked_minutes: tracked,
+            billable_minutes: billable_mins,
+            capacity_minutes,
+            utilization_pct,
+            revenue,
+            by_client,
+            by_project,
+        })
+    }
+
+    pub fn client_pdf_html(&self, client_id: i64, from_day: &str, to_day: &str) -> Result<String> {
+        let report = self.profitability_report(from_day, to_day)?;
+        let client = report
+            .by_client
+            .iter()
+            .find(|c| c.key == client_id.to_string());
+        let name = client.map(|c| c.label.as_str()).unwrap_or("Client");
+        let hours = client.map(|c| c.billable_minutes as f64 / 60.0).unwrap_or(0.0);
+        let rev = client.map(|c| c.revenue).unwrap_or(0.0);
+        let rate = client.map(|c| c.rate).unwrap_or(0.0);
+        Ok(format!(
+            r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>AutoTrace — {name}</title>
+<style>body{{font-family:system-ui,sans-serif;padding:40px;color:#111}}h1{{font-size:22px}}table{{border-collapse:collapse;width:100%;margin-top:24px}}td,th{{border-bottom:1px solid #ddd;padding:8px;text-align:left}}.muted{{color:#666}}</style></head>
+<body><h1>Time report — {name}</h1>
+<p class="muted">{from_day} → {to_day} · Generated by AutoTrace (local)</p>
+<p><strong>Billable hours:</strong> {hours:.2}<br>
+<strong>Rate:</strong> ${rate:.2}/hr<br>
+<strong>Amount:</strong> ${rev:.2}</p>
+<p class="muted">Titles and URLs omitted for privacy.</p>
+</body></html>"#
+        ))
+    }
+
+    pub fn list_workspaces(&self) -> Result<Vec<Workspace>> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, name, role, sync_url, is_active FROM workspaces ORDER BY id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(Workspace {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    role: row.get(2)?,
+                    sync_url: row.get(3)?,
+                    is_active: row.get::<_, i64>(4)? != 0,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn create_workspace(&self, name: &str) -> Result<Workspace> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute(
+            "INSERT INTO workspaces (name, role, is_active) VALUES (?1, 'owner', 0)",
+            params![name],
+        )?;
+        let id = conn.last_insert_rowid();
+        Ok(Workspace {
+            id,
+            name: name.into(),
+            role: "owner".into(),
+            sync_url: None,
+            is_active: false,
+        })
+    }
+
+    pub fn set_active_workspace(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute("UPDATE workspaces SET is_active = 0", [])?;
+        conn.execute("UPDATE workspaces SET is_active = 1 WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn set_workspace_sync(&self, id: i64, sync_url: Option<&str>, sync_token: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute(
+            "UPDATE workspaces SET sync_url = ?1, sync_token = ?2 WHERE id = ?3",
+            params![sync_url, sync_token, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn export_sync_pack(&self) -> Result<String> {
+        let hierarchy = self.hierarchy()?;
+        let workspaces = self.list_workspaces()?;
+        let payload = serde_json::json!({
+            "format": "autotrace-sync-v1",
+            "exported_at": chrono::Local::now().to_rfc3339(),
+            "workspaces": workspaces,
+            "hierarchy": hierarchy,
+        });
+        Ok(payload.to_string())
+    }
+
+    pub fn list_block_rules(&self) -> Result<Vec<BlockRule>> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, pattern, match_field, mode, enabled FROM block_rules ORDER BY id DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(BlockRule {
+                    id: row.get(0)?,
+                    pattern: row.get(1)?,
+                    match_field: row.get(2)?,
+                    mode: row.get(3)?,
+                    enabled: row.get::<_, i64>(4)? != 0,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn create_block_rule(&self, pattern: &str, match_field: &str, mode: &str) -> Result<BlockRule> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute(
+            "INSERT INTO block_rules (pattern, match_field, mode, enabled) VALUES (?1, ?2, ?3, 1)",
+            params![pattern, match_field, mode],
+        )?;
+        let id = conn.last_insert_rowid();
+        Ok(BlockRule {
+            id,
+            pattern: pattern.into(),
+            match_field: match_field.into(),
+            mode: mode.into(),
+            enabled: true,
+        })
+    }
+
+    pub fn delete_block_rule(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute("DELETE FROM block_rules WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn is_distraction_blocked(&self, app: &str, title: Option<&str>, url: Option<&str>) -> Result<Option<String>> {
+        let enabled = self
+            .get_setting("distraction_block")?
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        if !enabled {
+            return Ok(None);
+        }
+        let rules = self.list_block_rules()?;
+        let app_l = app.to_lowercase();
+        let title_l = title.unwrap_or("").to_lowercase();
+        let url_l = url.unwrap_or("").to_lowercase();
+        for r in rules.into_iter().filter(|r| r.enabled) {
+            let pat = r.pattern.to_lowercase();
+            if pat.is_empty() {
+                continue;
+            }
+            let hay = match r.match_field.as_str() {
+                "url" => url_l.as_str(),
+                "title" => title_l.as_str(),
+                _ => app_l.as_str(),
+            };
+            if hay.contains(&pat) {
+                return Ok(Some(r.mode));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn upsert_oauth_token(
+        &self,
+        provider: &str,
+        access_token: &str,
+        refresh_token: Option<&str>,
+        expires_at: Option<&str>,
+        account_label: Option<&str>,
+        extra_json: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute(
+            "INSERT INTO oauth_tokens (provider, access_token, refresh_token, expires_at, account_label, extra_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
+             ON CONFLICT(provider) DO UPDATE SET
+               access_token = excluded.access_token,
+               refresh_token = excluded.refresh_token,
+               expires_at = excluded.expires_at,
+               account_label = excluded.account_label,
+               extra_json = excluded.extra_json,
+               updated_at = datetime('now')",
+            params![provider, access_token, refresh_token, expires_at, account_label, extra_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_oauth_token(&self, provider: &str) -> Result<Option<(String, Option<String>, Option<String>)>> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let row = conn
+            .query_row(
+                "SELECT access_token, refresh_token, account_label FROM oauth_tokens WHERE provider = ?1",
+                params![provider],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn clear_oauth_token(&self, provider: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute("DELETE FROM oauth_tokens WHERE provider = ?1", params![provider])?;
+        Ok(())
+    }
+
+
 }
 
 fn map_sync_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<SyncLogRow> {
@@ -1794,12 +2173,14 @@ fn session_to_export_entry(s: &SessionRow) -> ExportEntry {
     }
 }
 
+
 /// App-managed state shared across IPC commands and the tray.
 pub struct AppState {
     pub store: std::sync::Arc<Store>,
     pub tracker: std::sync::Arc<crate::tracker::TrackerHandle>,
     pub local_api: std::sync::Arc<crate::integrations::LocalApiHandle>,
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -1811,7 +2192,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let store = Store::open(dir.join("t.db")).unwrap();
-        assert!(store.schema_version().unwrap() >= 6);
+        assert!(store.schema_version().unwrap() >= 7);
         let app = store.upsert_app("Code", None).unwrap();
         let id = store
             .start_session(

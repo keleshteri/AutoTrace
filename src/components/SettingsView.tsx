@@ -549,6 +549,143 @@ export function SettingsView({
           {status?.network_enabled ? "on" : "off"}
         </p>
       </div>
+
+      <Phase4Extras onError={onError} />
     </div>
+  );
+}
+
+function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
+  const [pass, setPass] = useState("");
+  const [blockPat, setBlockPat] = useState("");
+  const [rules, setRules] = useState<Awaited<ReturnType<typeof api.listBlockRules>>>([]);
+  const [blockOn, setBlockOn] = useState(false);
+  const [mlOn, setMlOn] = useState(true);
+  const [vault, setVault] = useState<{ vault_exists: boolean } | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setRules(await api.listBlockRules());
+        setBlockOn((await api.getFeatureFlag("distraction_block")) === "1");
+        setMlOn((await api.getFeatureFlag("ml_tagging")) !== "0");
+        setVault(await api.vaultStatus());
+      } catch (e) {
+        onError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  }, [onError]);
+
+  return (
+    <>
+      <div className="card" style={{ marginTop: 12 }}>
+        <p className="kicker">Distraction blocker</p>
+        <label className="muted" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={blockOn}
+            onChange={(e) => {
+              const v = e.target.checked;
+              setBlockOn(v);
+              void api.setFeatureFlag("distraction_block", v ? "1" : "0");
+            }}
+          />
+          Soft-block matching apps (skip tracking)
+        </label>
+        <div className="mini-form" style={{ marginTop: 10 }}>
+          <input
+            value={blockPat}
+            onChange={(e) => setBlockPat(e.target.value)}
+            placeholder="youtube / twitter / game"
+          />
+          <button
+            type="button"
+            className="btn"
+            onClick={() =>
+              void api
+                .createBlockRule(blockPat.trim(), "app", "soft")
+                .then(() => api.listBlockRules())
+                .then(setRules)
+                .then(() => setBlockPat(""))
+            }
+          >
+            Add rule
+          </button>
+        </div>
+        <ul className="tree" style={{ marginTop: 8 }}>
+          {rules.map((r) => (
+            <li key={r.id}>
+              {r.pattern} ({r.mode})
+              <button
+                type="button"
+                className="btn"
+                style={{ marginLeft: 8 }}
+                onClick={() =>
+                  void api.deleteBlockRule(r.id).then(() => api.listBlockRules()).then(setRules)
+                }
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="card" style={{ marginTop: 12 }}>
+        <p className="kicker">On-device tagging</p>
+        <label className="muted" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={mlOn}
+            onChange={(e) => {
+              const v = e.target.checked;
+              setMlOn(v);
+              void api.setFeatureFlag("ml_tagging", v ? "1" : "0");
+            }}
+          />
+          Local keyword model (no cloud AI)
+        </label>
+      </div>
+
+      <div className="card" style={{ marginTop: 12 }}>
+        <p className="kicker">Database encryption (opt-in)</p>
+        <p className="muted">
+          Creates an AES-256-GCM vault sidecar. Unlock before opening if locked.
+          {vault?.vault_exists ? " Vault file present." : ""}
+        </p>
+        <div className="mini-form" style={{ marginTop: 10 }}>
+          <input
+            type="password"
+            value={pass}
+            onChange={(e) => setPass(e.target.value)}
+            placeholder="Passphrase (8+ chars)"
+          />
+          <button
+            type="button"
+            className="btn"
+            onClick={() =>
+              void api
+                .lockDatabase(pass)
+                .then(() => window.alert("Vault written beside the DB"))
+                .catch((e) => onError(String(e)))
+            }
+          >
+            Lock / encrypt copy
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() =>
+              void api
+                .unlockDatabase(pass)
+                .then(() => window.alert("Unlocked to DB path"))
+                .catch((e) => onError(String(e)))
+            }
+          >
+            Unlock
+          </button>
+        </div>
+      </div>
+    </>
   );
 }

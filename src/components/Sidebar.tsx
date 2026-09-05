@@ -11,6 +11,8 @@ type NavId =
   | "tasks"
   | "rules"
   | "reports"
+  | "profit"
+  | "teams"
   | "integrations"
   | "settings";
 
@@ -116,6 +118,26 @@ const NAV: {
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
         <path d="M4 19V5M4 19h16M8 15v4M12 10v9M16 7v12" />
+      </svg>
+    ),
+  },
+  {
+    id: "profit",
+    label: "Profitability",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="M4 19h16M6 16l4-6 3 3 5-8" />
+      </svg>
+    ),
+  },
+  {
+    id: "teams",
+    label: "Teams",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <circle cx="9" cy="8" r="3" />
+        <circle cx="16" cy="9" r="2.5" />
+        <path d="M3 19c0-3 3-5 6-5s6 2 6 5M13 19c.5-2 2.5-3.5 5-3.5 1.2 0 2.3.4 3 1" />
       </svg>
     ),
   },

@@ -146,11 +146,31 @@ mod platform {
     use std::process::Command;
 
     pub fn capture_supported() -> bool {
-        // Best-effort via xdotool when available (WSLg / X11).
         which("xdotool")
+            || which("hyprctl")
+            || which("swaymsg")
+            || std::env::var_os("WAYLAND_DISPLAY").is_some()
     }
 
     pub fn sample_foreground() -> Option<CaptureSample> {
+        if let Some(s) = sample_hyprland() {
+            return Some(s);
+        }
+        if let Some(s) = sample_sway() {
+            return Some(s);
+        }
+        sample_xdotool()
+    }
+
+    pub fn idle_seconds() -> Option<IdleSecs> {
+        if which("xprintidle") {
+            let ms = run_stdout(&["xprintidle"])?.parse::<u64>().ok()?;
+            return Some(ms / 1000);
+        }
+        None
+    }
+
+    fn sample_xdotool() -> Option<CaptureSample> {
         if !which("xdotool") {
             return None;
         }
@@ -164,7 +184,6 @@ mod platform {
             .and_then(|p| std::path::Path::new(p).file_name())
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Unknown".into());
-
         Some(CaptureSample {
             app_name,
             executable: exe,
@@ -173,28 +192,62 @@ mod platform {
         })
     }
 
-    pub fn idle_seconds() -> Option<IdleSecs> {
-        if which("xprintidle") {
-            let ms = run_stdout(&["xprintidle"])?.parse::<u64>().ok()?;
-            return Some(ms / 1000);
+    fn sample_hyprland() -> Option<CaptureSample> {
+        if !which("hyprctl") {
+            return None;
+        }
+        let json = run_stdout(&["hyprctl", "activewindow", "-j"])?;
+        let v: serde_json::Value = serde_json::from_str(&json).ok()?;
+        let app_name = v.get("class").and_then(|x| x.as_str()).unwrap_or("Unknown").to_string();
+        let title = v.get("title").and_then(|x| x.as_str()).map(str::to_string);
+        Some(CaptureSample { app_name, executable: None, title, url: None })
+    }
+
+    fn sample_sway() -> Option<CaptureSample> {
+        if !which("swaymsg") {
+            return None;
+        }
+        let json = run_stdout(&["swaymsg", "-t", "get_tree"])?;
+        let v: serde_json::Value = serde_json::from_str(&json).ok()?;
+        find_focused(&v).map(|(app, title)| CaptureSample {
+            app_name: app,
+            executable: None,
+            title,
+            url: None,
+        })
+    }
+
+    fn find_focused(node: &serde_json::Value) -> Option<(String, Option<String>)> {
+        if node.get("focused").and_then(|x| x.as_bool()) == Some(true) {
+            let app = node
+                .get("app_id")
+                .and_then(|x| x.as_str())
+                .or_else(|| node.get("name").and_then(|x| x.as_str()))
+                .unwrap_or("Unknown")
+                .to_string();
+            let title = node.get("name").and_then(|x| x.as_str()).map(str::to_string);
+            return Some((app, title));
+        }
+        for key in ["nodes", "floating_nodes"] {
+            if let Some(arr) = node.get(key).and_then(|x| x.as_array()) {
+                for child in arr {
+                    if let Some(hit) = find_focused(child) {
+                        return Some(hit);
+                    }
+                }
+            }
         }
         None
     }
 
     fn which(bin: &str) -> bool {
-        Command::new("which")
-            .arg(bin)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        Command::new("which").arg(bin).output().map(|o| o.status.success()).unwrap_or(false)
     }
 
     fn run_stdout(cmd: &[&str]) -> Option<String> {
         let (bin, args) = cmd.split_first()?;
         let out = Command::new(bin).args(args).output().ok()?;
-        if !out.status.success() {
-            return None;
-        }
+        if !out.status.success() { return None; }
         Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 }
@@ -202,18 +255,46 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use super::{CaptureSample, IdleSecs};
+    use std::process::Command;
 
     pub fn capture_supported() -> bool {
-        false
+        which("osascript")
     }
 
     pub fn sample_foreground() -> Option<CaptureSample> {
-        // Accessibility API capture arrives after Windows MVP.
-        None
+        let app = run_osascript(
+            r#"tell application "System Events" to get name of first application process whose frontmost is true"#,
+        )?;
+        let title = run_osascript(
+            r#"tell application "System Events" to get title of first window of (first application process whose frontmost is true)"#,
+        )
+        .filter(|s| !s.is_empty());
+        Some(CaptureSample { app_name: app, executable: None, title, url: None })
     }
 
     pub fn idle_seconds() -> Option<IdleSecs> {
+        let out = Command::new("ioreg").args(["-c", "IOHIDSystem"]).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            if line.contains("HIDIdleTime") {
+                let digits: String = line.chars().filter(|c| c.is_ascii_digit()).collect();
+                if let Ok(ns) = digits.parse::<u64>() {
+                    return Some(ns / 1_000_000_000);
+                }
+            }
+        }
         None
+    }
+
+    fn which(bin: &str) -> bool {
+        Command::new("which").arg(bin).output().map(|o| o.status.success()).unwrap_or(false)
+    }
+
+    fn run_osascript(script: &str) -> Option<String> {
+        let out = Command::new("osascript").args(["-e", script]).output().ok()?;
+        if !out.status.success() { return None; }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
     }
 }
 

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { FocusSession, formatElapsed } from "../lib/api";
 
 type Props = {
@@ -10,6 +11,56 @@ type Props = {
   onOpenTimer: () => void;
 };
 
+/** Soft ambient pad via Web Audio (no external files). */
+function useAmbientPad(playing: boolean) {
+  const ctxRef = useRef<AudioContext | null>(null);
+  const nodesRef = useRef<{ osc: OscillatorNode; gain: GainNode }[]>([]);
+
+  useEffect(() => {
+    if (!playing) {
+      for (const n of nodesRef.current) {
+        try {
+          n.osc.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+      nodesRef.current = [];
+      void ctxRef.current?.close();
+      ctxRef.current = null;
+      return;
+    }
+    const ctx = new AudioContext();
+    ctxRef.current = ctx;
+    const master = ctx.createGain();
+    master.gain.value = 0.04;
+    master.connect(ctx.destination);
+    const freqs = [110, 164.81, 220];
+    nodesRef.current = freqs.map((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = i === 0 ? "sine" : "triangle";
+      osc.frequency.value = f;
+      gain.gain.value = 0.3 / freqs.length;
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start();
+      return { osc, gain };
+    });
+    return () => {
+      for (const n of nodesRef.current) {
+        try {
+          n.osc.stop();
+        } catch {
+          /* */
+        }
+      }
+      nodesRef.current = [];
+      void ctx.close();
+    };
+  }, [playing]);
+}
+
 export function StatusBar({
   trackerStatus,
   currentApp,
@@ -21,6 +72,8 @@ export function StatusBar({
 }: Props) {
   const trackingOn = trackerStatus === "running";
   const focusing = focus?.status === "active";
+  const [musicOn, setMusicOn] = useState(false);
+  useAmbientPad(musicOn);
 
   return (
     <footer className="status-bar">
@@ -68,18 +121,31 @@ export function StatusBar({
       </div>
 
       <div className="status-bar-right">
-        <div className="ambient-player" title="Ambience UI preview — coming soon">
+        <div className="ambient-player">
           <div className="ambient-art" aria-hidden>
             <span />
           </div>
           <div className="ambient-meta">
             <div className="ambient-title">Space Ambience</div>
-            <div className="ambient-sub">Focus soundscape</div>
+            <div className="ambient-sub">
+              {musicOn ? "Playing (local synth)" : "Focus soundscape"}
+            </div>
           </div>
-          <button type="button" className="ambient-btn" aria-label="Play" disabled>
-            ▶
+          <button
+            type="button"
+            className="ambient-btn"
+            aria-label={musicOn ? "Pause" : "Play"}
+            onClick={() => setMusicOn((v) => !v)}
+          >
+            {musicOn ? "❚❚" : "▶"}
           </button>
-          <button type="button" className="ambient-btn" aria-label="Volume" disabled>
+          <button
+            type="button"
+            className="ambient-btn"
+            aria-label="Volume"
+            title="Volume fixed soft"
+            disabled
+          >
             ♪
           </button>
         </div>

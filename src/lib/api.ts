@@ -54,6 +54,7 @@ export type SessionRow = {
   confidence: number | null;
   pending: boolean;
   category: string | null;
+  billable: boolean;
 };
 
 export const SESSION_CATEGORIES = [
@@ -77,6 +78,8 @@ export type ProjectNode = {
   id: number;
   name: string;
   color: string | null;
+  hourly_rate: number | null;
+  budget_hours: number | null;
   tasks: Task[];
 };
 
@@ -84,6 +87,7 @@ export type ClientNode = {
   id: number;
   name: string;
   color: string | null;
+  hourly_rate: number | null;
   projects: ProjectNode[];
 };
 
@@ -425,6 +429,106 @@ export const api = {
   activityAppBreakdown: (day: string) =>
     invoke<AppUsageBucket[]>("activity_app_breakdown", { day }),
   redactActivityMetadata: () => invoke<number>("redact_activity_metadata"),
+
+  setClientRate: (clientId: number, hourlyRate: number | null) =>
+    invoke<void>("set_client_rate", { clientId, hourlyRate }),
+  setProjectRate: (
+    projectId: number,
+    hourlyRate: number | null,
+    budgetHours: number | null,
+  ) =>
+    invoke<void>("set_project_rate", {
+      projectId,
+      hourlyRate,
+      budgetHours,
+    }),
+  setSessionBillable: (sessionId: number, billable: boolean) =>
+    invoke<void>("set_session_billable", { sessionId, billable }),
+  getProfitabilityReport: (fromDay: string, toDay: string) =>
+    invoke<ProfitabilityReport>("get_profitability_report", { fromDay, toDay }),
+  exportClientPdfHtml: (clientId: number, fromDay: string, toDay: string) =>
+    invoke<string>("export_client_pdf_html", { clientId, fromDay, toDay }),
+  listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
+  createWorkspace: (name: string) => invoke<Workspace>("create_workspace", { name }),
+  setActiveWorkspace: (id: number) => invoke<void>("set_active_workspace", { id }),
+  setWorkspaceSync: (
+    id: number,
+    syncUrl: string | null,
+    syncToken: string | null,
+  ) =>
+    invoke<void>("set_workspace_sync", { id, syncUrl, syncToken }),
+  exportSyncPack: () => invoke<string>("export_sync_pack"),
+  pushSyncPack: (workspaceId: number) =>
+    invoke<string>("push_sync_pack", { workspaceId }),
+  listBlockRules: () => invoke<BlockRule[]>("list_block_rules"),
+  createBlockRule: (pattern: string, matchField: string, mode: string) =>
+    invoke<BlockRule>("create_block_rule", { pattern, matchField, mode }),
+  deleteBlockRule: (id: number) => invoke<void>("delete_block_rule", { id }),
+  setFeatureFlag: (key: string, value: string) =>
+    invoke<void>("set_feature_flag", { key, value }),
+  getFeatureFlag: (key: string) =>
+    invoke<string | null>("get_feature_flag", { key }),
+  lockDatabase: (passphrase: string) =>
+    invoke<void>("lock_database", { passphrase }),
+  unlockDatabase: (passphrase: string) =>
+    invoke<void>("unlock_database", { passphrase }),
+  vaultStatus: () =>
+    invoke<{ vault_exists: boolean; db_encryption: string | null }>("vault_status"),
+  oauthAuthorizeUrl: (provider: string, clientId: string, redirectUri: string) =>
+    invoke<string>("oauth_authorize_url", { provider, clientId, redirectUri }),
+  oauthExchangeCode: (payload: {
+    provider: string;
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    code: string;
+  }) => invoke<string>("oauth_exchange_code", payload),
+  syncGoogleCalendar: (day: string) =>
+    invoke<number>("sync_google_calendar", { day }),
+  syncOutlookCalendar: (day: string) =>
+    invoke<number>("sync_outlook_calendar", { day }),
+};
+
+export type ProfitabilityReport = {
+  from_day: string;
+  to_day: string;
+  tracked_minutes: number;
+  billable_minutes: number;
+  capacity_minutes: number;
+  utilization_pct: number;
+  revenue: number;
+  by_client: {
+    key: string;
+    label: string;
+    minutes: number;
+    billable_minutes: number;
+    rate: number;
+    revenue: number;
+  }[];
+  by_project: {
+    key: string;
+    label: string;
+    minutes: number;
+    billable_minutes: number;
+    rate: number;
+    revenue: number;
+  }[];
+};
+
+export type Workspace = {
+  id: number;
+  name: string;
+  role: string;
+  sync_url: string | null;
+  is_active: boolean;
+};
+
+export type BlockRule = {
+  id: number;
+  pattern: string;
+  match_field: string;
+  mode: string;
+  enabled: boolean;
 };
 
 export type FocusSession = {

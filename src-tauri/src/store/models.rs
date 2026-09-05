@@ -8,6 +8,7 @@ pub struct Client {
     pub name: String,
     pub color: Option<String>,
     pub archived: bool,
+    pub hourly_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +18,8 @@ pub struct Project {
     pub name: String,
     pub color: Option<String>,
     pub archived: bool,
+    pub hourly_rate: Option<f64>,
+    pub budget_hours: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +76,7 @@ pub struct SessionRow {
     pub pending: bool,
     /// Focus | Code | Meeting | Break | Other
     pub category: Option<String>,
+    pub billable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +118,7 @@ pub struct ClientNode {
     pub id: i64,
     pub name: String,
     pub color: Option<String>,
+    pub hourly_rate: Option<f64>,
     pub projects: Vec<ProjectNode>,
 }
 
@@ -122,6 +127,8 @@ pub struct ProjectNode {
     pub id: i64,
     pub name: String,
     pub color: Option<String>,
+    pub hourly_rate: Option<f64>,
+    pub budget_hours: Option<f64>,
     pub tasks: Vec<Task>,
 }
 
@@ -140,6 +147,47 @@ pub struct DayReport {
     pub by_client: Vec<ReportBucket>,
     pub total_minutes: i64,
     pub idle_minutes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfitRow {
+    pub key: String,
+    pub label: String,
+    pub minutes: i64,
+    pub billable_minutes: i64,
+    pub rate: f64,
+    pub revenue: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfitabilityReport {
+    pub from_day: String,
+    pub to_day: String,
+    pub tracked_minutes: i64,
+    pub billable_minutes: i64,
+    pub capacity_minutes: i64,
+    pub utilization_pct: f32,
+    pub revenue: f64,
+    pub by_client: Vec<ProfitRow>,
+    pub by_project: Vec<ProfitRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Workspace {
+    pub id: i64,
+    pub name: String,
+    pub role: String,
+    pub sync_url: Option<String>,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockRule {
+    pub id: i64,
+    pub pattern: String,
+    pub match_field: String,
+    pub mode: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

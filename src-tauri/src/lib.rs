@@ -4,6 +4,7 @@ mod store;
 mod tagger;
 mod tracker;
 mod tray;
+mod vault;
 
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -81,6 +82,30 @@ pub fn run() {
             commands::delete_activity_event,
             commands::activity_app_breakdown,
             commands::redact_activity_metadata,
+            commands::set_client_rate,
+            commands::set_project_rate,
+            commands::set_session_billable,
+            commands::get_profitability_report,
+            commands::export_client_pdf_html,
+            commands::list_workspaces,
+            commands::create_workspace,
+            commands::set_active_workspace,
+            commands::set_workspace_sync,
+            commands::export_sync_pack,
+            commands::push_sync_pack,
+            commands::list_block_rules,
+            commands::create_block_rule,
+            commands::delete_block_rule,
+            commands::set_feature_flag,
+            commands::get_feature_flag,
+            commands::lock_database,
+            commands::unlock_database,
+            commands::vault_status,
+            commands::oauth_authorize_url,
+            commands::oauth_exchange_code,
+            commands::sync_google_calendar,
+            commands::sync_outlook_calendar,
+
         ])
         .build(tauri::generate_context!())
         .expect("error while building AutoTrace")

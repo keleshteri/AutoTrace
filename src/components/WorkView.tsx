@@ -146,12 +146,52 @@ export function WorkView({ mode, onError }: Props) {
       <ul className="tree">
         {(hierarchy?.clients ?? []).map((c) => (
           <li key={c.id}>
-            <div className="tree-client">{c.name}</div>
+            <div className="tree-client">
+              {c.name}
+              {mode === "clients" && (
+                <span className="muted" style={{ marginLeft: 8 }}>
+                  $
+                  <input
+                    type="number"
+                    style={{ width: 72, marginLeft: 4 }}
+                    defaultValue={c.hourly_rate ?? ""}
+                    placeholder="rate"
+                    onBlur={(e) => {
+                      const v = e.target.value ? Number(e.target.value) : null;
+                      void api.setClientRate(c.id, v).then(refresh);
+                    }}
+                  />
+                  /hr
+                </span>
+              )}
+            </div>
             {(mode === "projects" || mode === "tasks") && (
               <ul>
                 {c.projects.map((p) => (
                   <li key={p.id}>
-                    <div className="tree-project">{p.name}</div>
+                    <div className="tree-project">
+                      {p.name}
+                      {mode === "projects" && (
+                        <span className="muted" style={{ marginLeft: 8 }}>
+                          $
+                          <input
+                            type="number"
+                            style={{ width: 72, marginLeft: 4 }}
+                            defaultValue={p.hourly_rate ?? ""}
+                            placeholder="rate"
+                            onBlur={(e) => {
+                              const v = e.target.value
+                                ? Number(e.target.value)
+                                : null;
+                              void api
+                                .setProjectRate(p.id, v, p.budget_hours)
+                                .then(refresh);
+                            }}
+                          />
+                          /hr
+                        </span>
+                      )}
+                    </div>
                     {mode === "tasks" && (
                       <ul>
                         {p.tasks.map((t) => (

@@ -208,7 +208,56 @@ UPDATE sessions SET category = 'Other' WHERE category IS NULL;
 UPDATE settings SET value = '6' WHERE key = 'schema_version';
 "#;
 
-pub const SCHEMA_VERSION: i64 = 6;
+const MIGRATION_V7: &str = r#"
+ALTER TABLE clients ADD COLUMN hourly_rate REAL;
+ALTER TABLE projects ADD COLUMN hourly_rate REAL;
+ALTER TABLE projects ADD COLUMN budget_hours REAL;
+ALTER TABLE sessions ADD COLUMN billable INTEGER NOT NULL DEFAULT 1;
+
+CREATE TABLE IF NOT EXISTS workspaces (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    role        TEXT NOT NULL DEFAULT 'owner',
+    sync_url    TEXT,
+    sync_token  TEXT,
+    is_active   INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider      TEXT NOT NULL UNIQUE,
+    access_token  TEXT NOT NULL,
+    refresh_token TEXT,
+    expires_at    TEXT,
+    account_label TEXT,
+    extra_json    TEXT NOT NULL DEFAULT '{}',
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS block_rules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern     TEXT NOT NULL,
+    match_field TEXT NOT NULL DEFAULT 'app',
+    mode        TEXT NOT NULL DEFAULT 'soft',
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO settings (key, value) VALUES ('db_encryption', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('ml_tagging', '1');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('distraction_block', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('capacity_hours_week', '40');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('ambient_track', 'space');
+
+INSERT INTO workspaces (name, role, is_active)
+SELECT 'Personal', 'owner', 1
+WHERE NOT EXISTS (SELECT 1 FROM workspaces);
+
+UPDATE settings SET value = '7' WHERE key = 'schema_version';
+"#;
+
+pub const SCHEMA_VERSION: i64 = 7;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i64 = conn
@@ -254,6 +303,14 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 6 {
         let _ = conn.execute_batch(MIGRATION_V6);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '6')
+             ON CONFLICT(key) DO UPDATE SET value = '6'",
+            [],
+        )?;
+    }
+    if current < 7 {
+        let _ = conn.execute_batch(MIGRATION_V7);
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

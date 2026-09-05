@@ -172,6 +172,13 @@ fn tick(store: &Store, inner: &Mutex<Inner>) {
             {
                 return None;
             }
+            if let Ok(Some(mode)) =
+                store.is_distraction_blocked(&s.app_name, s.title.as_deref(), s.url.as_deref())
+            {
+                // soft = don't track; hard = same for now (OS focus-assist later)
+                let _ = mode;
+                return None;
+            }
             Some(s)
         })
     };
