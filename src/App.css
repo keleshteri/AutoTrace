@@ -463,6 +463,342 @@ button {
   pointer-events: none;
 }
 
+/* ——— Rize calendar (dual / week / month) ——— */
+.calendar-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.lane-tabs-end {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding-bottom: 8px;
+}
+
+.day-grid.dual {
+  grid-template-columns: 64px 1fr;
+}
+
+.day-columns {
+  display: grid;
+  grid-template-columns: repeat(var(--cal-cols, 2), minmax(0, 1fr));
+  gap: 0;
+  position: relative;
+}
+
+.day-col {
+  position: relative;
+  min-width: 0;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.day-col-head {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.day-col .hour-track {
+  border-left: none;
+}
+
+.session-block.activity {
+  color: #f5f3ff;
+  left: 6px;
+  right: 6px;
+}
+
+.session-block.focus {
+  color: #042f2e;
+  font-weight: 600;
+  left: 6px;
+  right: 6px;
+  box-shadow: 0 4px 18px rgba(34, 211, 238, 0.22);
+}
+
+.session-block.break {
+  color: #e0e7ff;
+  left: 6px;
+  right: 6px;
+  opacity: 0.9;
+}
+
+.now-tag {
+  position: absolute;
+  left: 8px;
+  top: -10px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.week-cal {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 16px 20px;
+  overflow: auto;
+}
+
+.week-head {
+  display: grid;
+  grid-template-columns: 56px repeat(7, 1fr);
+  gap: 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.week-corner {
+  min-height: 40px;
+}
+
+.week-day-head {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 10px 6px;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 8px 8px 0 0;
+}
+
+.week-day-head:hover {
+  color: var(--ink);
+  background: var(--bg-hover);
+}
+
+.week-day-head.today {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.week-day-head.active {
+  background: var(--bg-active);
+  color: var(--ink);
+}
+
+.week-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  min-height: 420px;
+  position: relative;
+}
+
+.week-hours {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 12px 8px 12px 0;
+  font-size: 11px;
+  color: var(--muted-2);
+  text-align: right;
+}
+
+.week-cols {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-left: 1px solid var(--border-subtle);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent calc(100% / 7 - 1px),
+    var(--border-subtle) calc(100% / 7 - 1px),
+    var(--border-subtle) calc(100% / 7)
+  );
+}
+
+.week-col {
+  position: relative;
+  border: none;
+  border-right: 1px solid var(--border-subtle);
+  background: transparent;
+  cursor: pointer;
+  min-height: 400px;
+  padding: 0;
+}
+
+.week-col:hover {
+  background: rgba(124, 92, 250, 0.04);
+}
+
+.week-col.today {
+  background: rgba(124, 92, 250, 0.06);
+}
+
+.week-bar {
+  position: absolute;
+  left: 18%;
+  width: 28%;
+  border-radius: 6px;
+  min-height: 8px;
+}
+
+.week-bar.activity {
+  background: #7c5cfa;
+}
+
+.week-bar.focus {
+  background: #22d3ee;
+  width: 28%;
+}
+
+.month-cal {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 16px 20px;
+  overflow: auto;
+}
+
+.month-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0;
+  padding: 4px 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.month-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-template-rows: repeat(6, minmax(88px, 1fr));
+  border-top: 1px solid var(--border-subtle);
+  border-left: 1px solid var(--border-subtle);
+  min-height: 480px;
+}
+
+.month-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px;
+  border: none;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 88px;
+}
+
+.month-cell:hover {
+  background: var(--bg-hover);
+}
+
+.month-cell.out {
+  color: var(--muted-2);
+  opacity: 0.55;
+}
+
+.month-cell.today {
+  background: rgba(124, 92, 250, 0.08);
+}
+
+.month-cell.active {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  z-index: 1;
+}
+
+.month-date {
+  align-self: flex-end;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  position: relative;
+}
+
+.month-cell.today .month-date {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.month-date.dot::after {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #7c5cfa;
+}
+
+.month-pills {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.month-pills .pill {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.month-pills .pill.focus {
+  background: rgba(34, 211, 238, 0.2);
+  color: #67e8f9;
+}
+
+.month-pills .pill.break {
+  background: rgba(99, 102, 241, 0.25);
+  color: #c7d2fe;
+}
+
+.stack-legend.rize-prod {
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stack-legend.rize-prod span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stack-legend.rize-prod b {
+  margin-left: auto;
+  color: var(--ink);
+  font-weight: 600;
+}
+
 /* ——— Summary panel ——— */
 .summary {
   display: flex;

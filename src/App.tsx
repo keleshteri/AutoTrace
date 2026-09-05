@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Sidebar, NavId } from "./components/Sidebar";
-import { DayCalendar } from "./components/DayCalendar";
+import { CalendarView } from "./components/CalendarView";
 import { SummaryPanel } from "./components/SummaryPanel";
 import { SessionDetail } from "./components/SessionDetail";
 import { WorkView } from "./components/WorkView";
@@ -21,13 +21,12 @@ import {
   SessionRow,
   todayLocal,
 } from "./lib/api";
-import { formatDayHeading, shiftDay } from "./lib/time";
 import "./App.css";
 
 function App() {
   const [nav, setNav] = useState<NavId>("calendar");
   const [day, setDay] = useState(todayLocal);
-  const [lane, setLane] = useState<"entries" | "tasks" | "projects">("entries");
+  const [calRangeLabel, setCalRangeLabel] = useState("Day · Today");
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [hierarchy, setHierarchy] = useState<Hierarchy | null>(null);
@@ -183,116 +182,16 @@ function App() {
 
           {nav === "calendar" && (
             <>
-              <header className="topbar">
-                <div className="topbar-date">
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => setDay((d) => shiftDay(d, -1))}
-                    aria-label="Previous day"
-                  >
-                    ‹
-                  </button>
-                  <h1>{formatDayHeading(day)}</h1>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => setDay((d) => shiftDay(d, 1))}
-                    aria-label="Next day"
-                  >
-                    ›
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => setDay(todayLocal())}
-                    title="Today"
-                  >
-                    ●
-                  </button>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => setShowManual(true)}
-                  >
-                    + Manual
-                  </button>
-                  <div className="segment" role="group" aria-label="Range">
-                    <button type="button" className="active">
-                      Day
-                    </button>
-                    <button type="button" disabled title="Coming soon">
-                      Week
-                    </button>
-                    <button type="button" disabled title="Coming soon">
-                      Month
-                    </button>
-                    <button type="button" disabled title="Coming soon">
-                      Year
-                    </button>
-                  </div>
-                </div>
-              </header>
-
-              <div className="lane-tabs">
-                {(
-                  [
-                    ["entries", "Time entries"],
-                    ["tasks", "Tasks"],
-                    ["projects", "Projects"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={lane === id ? "active" : undefined}
-                    onClick={() => setLane(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
-                <div
-                  style={{
-                    marginLeft: "auto",
-                    display: "flex",
-                    gap: 10,
-                    alignItems: "center",
-                  }}
-                >
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    {selectedIds.length >= 2
-                      ? `${selectedIds.length} selected`
-                      : "⌘/Ctrl+click to multi-select · merge fragmented blocks"}
-                  </span>
-                  {selectedIds.length >= 2 && (
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => void mergeSelected()}
-                    >
-                      Merge {selectedIds.length}
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {error && <p className="error-banner">{error}</p>}
-
-              <DayCalendar
-                sessions={
-                  lane === "entries"
-                    ? sessions
-                    : sessions.filter((s) =>
-                        lane === "tasks"
-                          ? s.task_id != null
-                          : s.project_id != null,
-                      )
-                }
+              <CalendarView
+                day={day}
+                onDayChange={setDay}
+                sessions={sessions}
                 selectedIds={selectedIds}
                 onSelect={selectSession}
-                isToday={day === todayLocal()}
+                onOpenManual={() => setShowManual(true)}
+                onMerge={() => void mergeSelected()}
+                onRangeLabelChange={setCalRangeLabel}
+                error={error}
               />
 
               {selected && (
@@ -359,7 +258,11 @@ function App() {
         </div>
 
         {showSummary && (
-          <SummaryPanel sessions={sessions} digest={focusDigest} />
+          <SummaryPanel
+            sessions={sessions}
+            digest={focusDigest}
+            rangeLabel={calRangeLabel}
+          />
         )}
       </div>
 
