@@ -93,17 +93,14 @@ button {
   align-items: center;
   gap: 10px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   font-size: 13px;
   text-transform: uppercase;
 }
 
-.brand-dot {
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  background: linear-gradient(135deg, var(--accent), #4f46e5);
-  box-shadow: 0 0 16px rgba(124, 92, 250, 0.45);
+.brand-mark svg {
+  flex-shrink: 0;
+  border-radius: 8px;
 }
 
 .workspace-pill {
@@ -404,23 +401,28 @@ button {
   position: absolute;
   left: 8px;
   right: 8px;
-  border-radius: 10px;
-  padding: 8px 10px;
+  border-radius: 8px;
+  padding: 5px 8px;
   color: #fff;
   overflow: hidden;
   cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  transition: transform 0.12s ease, filter 0.12s ease;
+  justify-content: flex-start;
+  gap: 1px;
+  text-align: left;
+  z-index: 2;
+  transition: filter 0.12s ease, box-shadow 0.12s ease;
+  min-height: 28px;
+  box-sizing: border-box;
 }
 
 .session-block:hover {
-  filter: brightness(1.08);
-  transform: translateY(-1px);
-  z-index: 3;
+  filter: brightness(1.1);
+  z-index: 4;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .session-block.selected {
@@ -440,11 +442,13 @@ button {
 }
 
 .session-block .sb-title {
-  font-weight: 600;
-  font-size: 12.5px;
+  font-weight: 650;
+  font-size: 12px;
+  line-height: 1.25;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 
 .session-block .sb-meta {
@@ -517,23 +521,17 @@ button {
 
 .session-block.activity {
   color: #f5f3ff;
-  left: 6px;
-  right: 6px;
 }
 
 .session-block.focus {
   color: #042f2e;
   font-weight: 600;
-  left: 6px;
-  right: 6px;
-  box-shadow: 0 4px 18px rgba(34, 211, 238, 0.22);
+  box-shadow: 0 2px 12px rgba(34, 211, 238, 0.25);
 }
 
 .session-block.break {
   color: #e0e7ff;
-  left: 6px;
-  right: 6px;
-  opacity: 0.9;
+  opacity: 0.95;
 }
 
 .now-tag {
@@ -1300,7 +1298,75 @@ button {
 }
 
 .status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ambient-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 6px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  min-width: 220px;
+}
+
+.ambient-art {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 30% 30%, #22d3ee55, transparent 55%),
+    linear-gradient(145deg, #312e81, #0f172a);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.ambient-art span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22d3ee;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.55);
+}
+
+.ambient-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.ambient-title {
   font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ambient-sub {
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.ambient-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.ambient-btn:disabled {
+  cursor: default;
 }
 
 /* ——— Timer ——— */

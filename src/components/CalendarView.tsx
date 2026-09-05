@@ -16,13 +16,18 @@ import {
 } from "../lib/api";
 import { activityDisplayLabel, friendlyAppName } from "../lib/displayNames";
 import {
+  coalesceSpans,
+  layoutBlocks,
+  blockStyle,
+  TimedSpan,
+} from "../lib/calendarLayout";
+import {
   ACTIVITY_COLOR,
   BREAK_COLOR,
   DAY_END_HOUR,
   DAY_START_HOUR,
   FOCUS_COLOR,
   HOUR_HEIGHT,
-  blockGeometry,
   formatDayHeading,
   formatHourLabel,
   formatHoursMinutes,
@@ -38,17 +43,6 @@ import {
   weekDays,
   weekNumber,
 } from "../lib/time";
-
-function focusMinutes(list: FocusSession[]): number {
-  return list.reduce((acc, f) => {
-    const a = parseLocalDateTime(f.started_at).getTime();
-    const b = f.ended_at
-      ? parseLocalDateTime(f.ended_at).getTime()
-      : Date.now();
-    if (Number.isNaN(a) || Number.isNaN(b)) return acc;
-    return acc + Math.max(0, Math.round((b - a) / 60000));
-  }, 0);
-}
 
 export type CalRange = "day" | "week" | "month";
 export type CalLane =
@@ -77,6 +71,17 @@ type DayBundle = {
   focus: FocusSession[];
 };
 
+function focusMinutes(list: FocusSession[]): number {
+  return list.reduce((acc, f) => {
+    const a = parseLocalDateTime(f.started_at).getTime();
+    const b = f.ended_at
+      ? parseLocalDateTime(f.ended_at).getTime()
+      : Date.now();
+    if (Number.isNaN(a) || Number.isNaN(b)) return acc;
+    return acc + Math.max(0, Math.round((b - a) / 60000));
+  }, 0);
+}
+
 function isFocusSession(s: SessionRow): boolean {
   return (
     s.notes === "Focus session" ||
@@ -87,7 +92,9 @@ function isFocusSession(s: SessionRow): boolean {
 function activityLabel(s: SessionRow): string {
   if (s.idle) return "Break";
   if (s.app_name) {
-    return activityDisplayLabel(s.app_name, s.url) || friendlyAppName(s.app_name);
+    return (
+      activityDisplayLabel(s.app_name, s.url) || friendlyAppName(s.app_name)
+    );
   }
   return s.title || s.project_name || "Activity";
 }
@@ -153,7 +160,6 @@ export function CalendarView({
   useEffect(() => {
     if (range !== "month") return;
     const days = monthGrid(day);
-    // Only fetch days in the visible month (lighter)
     const [y, m] = day.split("-");
     const inMonth = days.filter((d) => d.startsWith(`${y}-${m}`));
     let cancelled = false;
@@ -189,21 +195,18 @@ export function CalendarView({
     else onDayChange(shiftDay(day, delta));
   }
 
-  const activitySessions = sessions.filter(
-    (s) => !isFocusSession(s) && (lane !== "sessions"),
-  );
-  const entrySessions =
-    lane === "tasks"
-      ? sessions.filter((s) => s.task_id != null)
-      : lane === "projects"
-        ? sessions.filter((s) => s.project_id != null)
-        : lane === "clients"
-          ? sessions.filter((s) => s.client_id != null)
-          : lane === "activity"
-            ? activitySessions
-            : sessions.filter((s) => !s.idle || lane === "entries");
+  const activitySource = useMemo(() => {
+    let list = sessions.filter((s) => !s.idle && !isFocusSession(s));
+    if (lane === "tasks") list = list.filter((s) => s.task_id != null);
+    else if (lane === "projects")
+      list = list.filter((s) => s.project_id != null);
+    else if (lane === "clients")
+      list = list.filter((s) => s.client_id != null);
+    else if (lane === "sessions") list = [];
+    return list;
+  }, [sessions, lane]);
 
-  const showActivityCol = lane === "activity" || lane === "entries";
+  const showActivityCol = lane !== "sessions";
   const showFocusCol =
     lane === "sessions" || lane === "entries" || lane === "activity";
 
@@ -283,18 +286,10 @@ export function CalendarView({
 
       {range === "day" && (
         <DayDualCalendar
-          sessions={entrySessions}
-          activitySessions={
-            showActivityCol
-              ? activitySessions.filter((s) =>
-                  lane === "activity" ? true : !isFocusSession(s),
-                )
-              : []
-          }
+          activitySessions={showActivityCol ? activitySource : []}
           focusSessions={showFocusCol ? focusList : []}
-          breakSessions={
-            showFocusCol ? sessions.filter((s) => s.idle) : []
-          }
+          breakSessions={showFocusCol ? sessions.filter((s) => s.idle) : []}
+          allSessions={sessions}
           selectedIds={selectedIds}
           onSelect={onSelect}
           isToday={day === todayLocal()}
@@ -329,20 +324,20 @@ export function CalendarView({
 }
 
 function DayDualCalendar({
-  sessions,
   activitySessions,
   focusSessions,
   breakSessions,
+  allSessions,
   selectedIds,
   onSelect,
   isToday,
   showActivity,
   showFocus,
 }: {
-  sessions: SessionRow[];
   activitySessions: SessionRow[];
   focusSessions: FocusSession[];
   breakSessions: SessionRow[];
+  allSessions: SessionRow[];
   selectedIds: number[];
   onSelect: (session: SessionRow, additive: boolean) => void;
   isToday: boolean;
@@ -360,9 +355,52 @@ function DayDualCalendar({
     return ((localMins - DAY_START_HOUR * 60) / 60) * HOUR_HEIGHT;
   })();
 
-  function handleClick(e: MouseEvent, session: SessionRow) {
+  function pickSession(sessionId: number | undefined, e: MouseEvent) {
+    if (sessionId == null) return;
+    const session = allSessions.find((s) => s.id === sessionId);
+    if (!session) return;
     onSelect(session, e.metaKey || e.ctrlKey || e.shiftKey);
   }
+
+  const activityBlocks = useMemo(() => {
+    const spans: TimedSpan[] = activitySessions.map((s) => ({
+      id: `a-${s.id}`,
+      started_at: s.started_at,
+      ended_at: s.ended_at,
+      label: activityLabel(s),
+      color: ACTIVITY_COLOR,
+      sessionId: s.id,
+      pending: s.pending,
+    }));
+    const merged = coalesceSpans(spans, (s) => s.label.toLowerCase());
+    return layoutBlocks(merged, DAY_START_HOUR, HOUR_HEIGHT);
+  }, [activitySessions]);
+
+  const sessionBlocks = useMemo(() => {
+    const focusSpans: TimedSpan[] = focusSessions.map((f) => ({
+      id: `f-${f.id}`,
+      started_at: f.started_at,
+      ended_at: f.ended_at,
+      label: f.goal?.trim() || "Focus",
+      color: FOCUS_COLOR,
+    }));
+    const breakSpans: TimedSpan[] = breakSessions.map((s) => ({
+      id: `b-${s.id}`,
+      started_at: s.started_at,
+      ended_at: s.ended_at,
+      label: "Break",
+      color: BREAK_COLOR,
+      sessionId: s.id,
+      idle: true,
+    }));
+    const mergedFocus = coalesceSpans(focusSpans, () => "focus");
+    const mergedBreaks = coalesceSpans(breakSpans, () => "break");
+    return layoutBlocks(
+      [...mergedFocus, ...mergedBreaks],
+      DAY_START_HOUR,
+      HOUR_HEIGHT,
+    );
+  }, [focusSessions, breakSessions]);
 
   const cols = (showActivity ? 1 : 0) + (showFocus ? 1 : 0) || 1;
 
@@ -412,29 +450,26 @@ function DayDualCalendar({
                     </span>
                   </div>
                 )}
-                {activitySessions.length === 0 && (
+                {activityBlocks.length === 0 && (
                   <p className="empty-hint">No activity yet</p>
                 )}
-                {activitySessions.map((s) => {
-                  const { top, height } = blockGeometry(s.started_at, s.ended_at);
-                  const selected = selectedIds.includes(s.id);
+                {activityBlocks.map((b) => {
+                  const selected =
+                    b.sessionId != null && selectedIds.includes(b.sessionId);
                   return (
                     <button
-                      key={s.id}
+                      key={b.id}
                       type="button"
-                      className={`session-block activity${s.pending ? " pending" : ""}${selected ? " selected" : ""}`}
-                      style={{
-                        top,
-                        height,
-                        background: s.idle ? BREAK_COLOR : ACTIVITY_COLOR,
-                      }}
-                      onClick={(e) => handleClick(e, s)}
+                      className={`session-block activity${b.pending ? " pending" : ""}${selected ? " selected" : ""}`}
+                      style={blockStyle(b)}
+                      title={`${b.label} · ${formatTime(b.started_at)} – ${b.ended_at ? formatTime(b.ended_at) : "now"}`}
+                      onClick={(e) => pickSession(b.sessionId, e)}
                     >
-                      <div className="sb-title">{activityLabel(s)}</div>
-                      {height > 36 && (
+                      <div className="sb-title">{b.label}</div>
+                      {b.height > 34 && (
                         <div className="sb-meta">
-                          {formatTime(s.started_at)} –{" "}
-                          {s.ended_at ? formatTime(s.ended_at) : "now"}
+                          {formatTime(b.started_at)} –{" "}
+                          {b.ended_at ? formatTime(b.ended_at) : "now"}
                         </div>
                       )}
                     </button>
@@ -458,67 +493,51 @@ function DayDualCalendar({
                 {nowTop != null && nowTop >= 0 && nowTop <= totalHeight && (
                   <div className="now-line" style={{ top: nowTop }} />
                 )}
-                {focusSessions.map((f) => {
-                  const { top, height } = blockGeometry(
-                    f.started_at,
-                    f.ended_at,
-                  );
+                {sessionBlocks.length === 0 && (
+                  <p className="empty-hint">No focus sessions</p>
+                )}
+                {sessionBlocks.map((b) => {
+                  const selected =
+                    b.sessionId != null && selectedIds.includes(b.sessionId);
+                  const isBreak = Boolean(b.idle);
+                  if (b.sessionId != null) {
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        className={`session-block ${isBreak ? "break" : "focus"}${selected ? " selected" : ""}`}
+                        style={blockStyle(b)}
+                        title={`${b.label} · ${formatTime(b.started_at)} – ${b.ended_at ? formatTime(b.ended_at) : "now"}`}
+                        onClick={(e) => pickSession(b.sessionId, e)}
+                      >
+                        <div className="sb-title">{b.label}</div>
+                        {b.height > 34 && (
+                          <div className="sb-meta">
+                            {isBreak
+                              ? durationLabel(b.started_at, b.ended_at)
+                              : `${formatTime(b.started_at)} – ${b.ended_at ? formatTime(b.ended_at) : "now"}`}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  }
                   return (
                     <div
-                      key={`f-${f.id}`}
-                      className="session-block focus"
-                      style={{ top, height, background: FOCUS_COLOR }}
-                      title={f.goal ?? "Focus"}
+                      key={b.id}
+                      className={`session-block ${isBreak ? "break" : "focus"}`}
+                      style={blockStyle(b)}
+                      title={`${b.label} · ${formatTime(b.started_at)} – ${b.ended_at ? formatTime(b.ended_at) : "now"}`}
                     >
-                      <div className="sb-title">Focus</div>
-                      {height > 36 && (
+                      <div className="sb-title">{b.label}</div>
+                      {b.height > 34 && (
                         <div className="sb-meta">
-                          {formatTime(f.started_at)} –{" "}
-                          {f.ended_at ? formatTime(f.ended_at) : "now"}
+                          {formatTime(b.started_at)} –{" "}
+                          {b.ended_at ? formatTime(b.ended_at) : "now"}
                         </div>
                       )}
                     </div>
                   );
                 })}
-                {breakSessions.map((s) => {
-                  const { top, height } = blockGeometry(s.started_at, s.ended_at);
-                  return (
-                    <button
-                      key={`b-${s.id}`}
-                      type="button"
-                      className={`session-block break${selectedIds.includes(s.id) ? " selected" : ""}`}
-                      style={{ top, height, background: BREAK_COLOR }}
-                      onClick={(e) => handleClick(e, s)}
-                    >
-                      <div className="sb-title">Break</div>
-                      {height > 36 && (
-                        <div className="sb-meta">
-                          {durationLabel(s.started_at, s.ended_at)}
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-                {/* Tagged time entries also appear in sessions column when filtering entries */}
-                {sessions
-                  .filter((s) => isFocusSession(s) && !s.idle)
-                  .map((s) => {
-                    const { top, height } = blockGeometry(
-                      s.started_at,
-                      s.ended_at,
-                    );
-                    return (
-                      <button
-                        key={`fe-${s.id}`}
-                        type="button"
-                        className={`session-block focus${selectedIds.includes(s.id) ? " selected" : ""}`}
-                        style={{ top, height, background: FOCUS_COLOR }}
-                        onClick={(e) => handleClick(e, s)}
-                      >
-                        <div className="sb-title">{s.title || "Focus"}</div>
-                      </button>
-                    );
-                  })}
               </div>
             </div>
           )}

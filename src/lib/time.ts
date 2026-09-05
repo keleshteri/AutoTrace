@@ -1,6 +1,6 @@
 /** Shared layout helpers for the Rize-style day grid. */
 
-export const HOUR_HEIGHT = 64;
+export const HOUR_HEIGHT = 72;
 export const DAY_START_HOUR = 4;
 export const DAY_END_HOUR = 23;
 

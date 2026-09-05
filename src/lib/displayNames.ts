@@ -8,6 +8,7 @@ const APP_ALIASES: Record<string, string> = {
   "opera.exe": "Opera",
   "code.exe": "Visual Studio Code",
   "cursor.exe": "Cursor",
+  "autotrace.exe": "AutoTrace",
   "windowsterminal.exe": "Windows Terminal",
   "windowsterminal": "Windows Terminal",
   "powershell.exe": "PowerShell",

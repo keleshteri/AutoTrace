@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AutoTraceLogo } from "./AutoTraceLogo";
 
 type NavId =
   | "calendar"
@@ -158,7 +159,7 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="sidebar-brand">
         <div className="brand-mark">
-          <span className="brand-dot" />
+          <AutoTraceLogo size={26} />
           <span>AutoTrace</span>
         </div>
       </div>

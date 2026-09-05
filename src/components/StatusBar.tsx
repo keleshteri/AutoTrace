@@ -39,7 +39,9 @@ export function StatusBar({
             <>
               <span className="focus-ring-mini" />
               <div>
-                <div className="status-time">{formatElapsed(focus.elapsed_secs)}</div>
+                <div className="status-time">
+                  {formatElapsed(focus.elapsed_secs)}
+                </div>
                 <div className="status-label">Focus time elapsed</div>
               </div>
             </>
@@ -64,8 +66,23 @@ export function StatusBar({
           </button>
         )}
       </div>
-      <div className="status-bar-right muted">
-        AutoTrace · local only
+
+      <div className="status-bar-right">
+        <div className="ambient-player" title="Ambience UI preview — coming soon">
+          <div className="ambient-art" aria-hidden>
+            <span />
+          </div>
+          <div className="ambient-meta">
+            <div className="ambient-title">Space Ambience</div>
+            <div className="ambient-sub">Focus soundscape</div>
+          </div>
+          <button type="button" className="ambient-btn" aria-label="Play" disabled>
+            ▶
+          </button>
+          <button type="button" className="ambient-btn" aria-label="Volume" disabled>
+            ♪
+          </button>
+        </div>
       </div>
     </footer>
   );
