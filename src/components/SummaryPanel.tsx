@@ -1,4 +1,5 @@
-import { SessionRow } from "../lib/api";
+import { useEffect, useState } from "react";
+import { FocusDigest, SessionRow, api } from "../lib/api";
 import {
   colorForKey,
   formatHoursMinutes,
@@ -7,6 +8,7 @@ import {
 
 type Props = {
   sessions: SessionRow[];
+  digest: FocusDigest | null;
 };
 
 type Bucket = { key: string; label: string; minutes: number; color: string };
@@ -48,20 +50,30 @@ function bucketSessions(sessions: SessionRow[]): Bucket[] {
   return [...map.values()].sort((a, b) => b.minutes - a.minutes).slice(0, 5);
 }
 
-export function SummaryPanel({ sessions }: Props) {
+export function SummaryPanel({ sessions, digest }: Props) {
+  const [pendingCount, setPendingCount] = useState(0);
   const tracked = totalMinutes(sessions);
-  const idleMins = sessions
-    .filter((s) => s.idle)
-    .reduce((acc, s) => acc + sessionMinutes(s), 0);
+  const idleMins =
+    digest?.idle_minutes ??
+    sessions.filter((s) => s.idle).reduce((acc, s) => acc + sessionMinutes(s), 0);
 
   const buckets = bucketSessions(sessions);
   const bucketTotal = buckets.reduce((a, b) => a + b.minutes, 0) || 1;
-  const target = 6 * 60;
-  const pct = Math.min(200, Math.round((tracked / target) * 100));
-
-  const focusMins = Math.round(tracked * 0.55);
-  const meetingMins = Math.round(tracked * 0.2);
+  const goal = digest?.goal_minutes ?? 6 * 60;
+  const focusMins = digest?.focus_minutes ?? Math.max(0, tracked);
+  const meetingMins = digest?.meeting_minutes ?? 0;
   const otherMins = Math.max(0, tracked - focusMins - meetingMins);
+  const pct = Math.min(
+    200,
+    Math.round(digest?.goal_pct ?? (tracked / goal) * 100),
+  );
+
+  useEffect(() => {
+    void api
+      .listPendingSessions()
+      .then((p) => setPendingCount(p.length))
+      .catch(() => setPendingCount(0));
+  }, [sessions]);
 
   const donut = buckets.length
     ? `conic-gradient(${buckets
@@ -87,12 +99,13 @@ export function SummaryPanel({ sessions }: Props) {
         <p className="trend">
           {sessions.filter((s) => !s.idle).length} session
           {sessions.filter((s) => !s.idle).length === 1 ? "" : "s"} tracked
+          {pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
         </p>
         <div className="progress">
           <span style={{ width: `${Math.min(100, pct)}%` }} />
         </div>
         <p className="progress-caption">
-          {pct}% of {formatHoursMinutes(target)} target
+          {pct}% of {formatHoursMinutes(goal)} focus goal
         </p>
       </div>
 
@@ -118,9 +131,16 @@ export function SummaryPanel({ sessions }: Props) {
       </div>
 
       <div className="card">
-        <p className="kicker">Focus time</p>
-        <p className="metric">{formatHoursMinutes(focusMins)}</p>
-        <p className="trend">Estimated from active sessions</p>
+        <p className="kicker">Focus score</p>
+        <p className="metric">
+          {digest ? Math.round(digest.focus_score) : "—"}
+        </p>
+        <p className="trend">
+          Deep focus {formatHoursMinutes(focusMins)}
+          {meetingMins > 0
+            ? ` · meetings ${formatHoursMinutes(meetingMins)}`
+            : ""}
+        </p>
       </div>
 
       <div className="card">

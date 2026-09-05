@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 import { SessionRow, durationLabel, formatTime } from "../lib/api";
 import {
   DAY_END_HOUR,
@@ -10,14 +10,14 @@ import {
 
 type Props = {
   sessions: SessionRow[];
-  selectedId: number | null;
-  onSelect: (session: SessionRow) => void;
+  selectedIds: number[];
+  onSelect: (session: SessionRow, additive: boolean) => void;
   isToday: boolean;
 };
 
 export function DayCalendar({
   sessions,
-  selectedId,
+  selectedIds,
   onSelect,
   isToday,
 }: Props) {
@@ -32,6 +32,10 @@ export function DayCalendar({
     const localMins = new Date().getHours() * 60 + new Date().getMinutes();
     return ((localMins - DAY_START_HOUR * 60) / 60) * HOUR_HEIGHT;
   })();
+
+  function handleClick(e: MouseEvent, session: SessionRow) {
+    onSelect(session, e.metaKey || e.ctrlKey || e.shiftKey);
+  }
 
   return (
     <div className="timeline-scroll">
@@ -79,9 +83,7 @@ export function DayCalendar({
             const { top, height } = blockGeometry(s.started_at, s.ended_at);
             const color = s.idle
               ? "#3f3f46"
-              : colorForKey(
-                  s.client_id ?? s.project_id ?? s.app_name ?? s.id,
-                );
+              : colorForKey(s.client_id ?? s.project_id ?? s.app_name ?? s.id);
             const title =
               s.task_name ||
               s.project_name ||
@@ -89,16 +91,23 @@ export function DayCalendar({
               s.title ||
               s.app_name ||
               "Untitled";
+            const selected = selectedIds.includes(s.id);
 
             return (
               <button
                 key={s.id}
                 type="button"
-                className={`session-block${s.idle ? " idle" : ""}${selectedId === s.id ? " selected" : ""}`}
+                className={`session-block${s.idle ? " idle" : ""}${s.pending ? " pending" : ""}${selected ? " selected" : ""}`}
                 style={{ top, height, background: color }}
-                onClick={() => onSelect(s)}
+                onClick={(e) => handleClick(e, s)}
               >
-                <div className="sb-title">{title}</div>
+                <div className="sb-title">
+                  {s.pending ? "◯ " : ""}
+                  {title}
+                  {s.confidence != null && height > 36
+                    ? ` · ${Math.round(s.confidence * 100)}%`
+                    : ""}
+                </div>
                 {height > 40 && (
                   <div className="sb-meta">
                     <span>

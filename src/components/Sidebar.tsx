@@ -2,10 +2,15 @@ import type { ReactNode } from "react";
 
 type NavId =
   | "calendar"
+  | "timer"
+  | "activity"
+  | "focus"
   | "projects"
   | "clients"
   | "tasks"
+  | "rules"
   | "reports"
+  | "integrations"
   | "settings";
 
 type Props = {
@@ -29,6 +34,35 @@ const NAV: {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
         <rect x="3" y="5" width="18" height="16" rx="2" />
         <path d="M3 9h18M8 3v4M16 3v4" />
+      </svg>
+    ),
+  },
+  {
+    id: "timer",
+    label: "Timer",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <circle cx="12" cy="13" r="8" />
+        <path d="M12 9v4l2.5 1.5M9 3h6" />
+      </svg>
+    ),
+  },
+  {
+    id: "activity",
+    label: "Activity",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="M4 14h3l2-5 3 10 2-5h6" />
+      </svg>
+    ),
+  },
+  {
+    id: "focus",
+    label: "Focus digest",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="3" />
       </svg>
     ),
   },
@@ -63,6 +97,18 @@ const NAV: {
     ),
   },
   {
+    id: "rules",
+    label: "Rules",
+    section: "Automate",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="M4 7h16M4 12h10M4 17h7" />
+        <circle cx="18" cy="12" r="2" />
+        <circle cx="15" cy="17" r="2" />
+      </svg>
+    ),
+  },
+  {
     id: "reports",
     label: "Reports",
     section: "Analyze",
@@ -73,9 +119,22 @@ const NAV: {
     ),
   },
   {
+    id: "integrations",
+    label: "Integrations",
+    section: "Admin",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="M8 12h8M12 8v8" />
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      </svg>
+    ),
+  },
+  {
     id: "settings",
     label: "Settings",
-    section: "Admin",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
         <circle cx="12" cy="12" r="3" />

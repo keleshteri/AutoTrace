@@ -32,7 +32,7 @@
 - `store` — SQLite schema: `sessions`, `apps`, `clients`, `projects`, `tasks`, `rules`, `settings`.
 - `tagger` — keyword/rules engine for mapping sessions to client/project/task; fully offline. AI-assisted tagging is a Phase 2 addition, not a dependency for MVP.
 - `ui` — day timeline, CRUD for the client/project/task hierarchy, review panel, privacy controls.
-- `integrations/` — pluggable adapters; empty and inert by default. Each adapter requires explicit OAuth/API-key setup and a defined data scope before it can send or receive anything.
+- `integrations/` — pluggable adapters (ClickUp, webhook, localhost export API). Empty/inert until the user enables a connector and confirms scope. Only approved, tagged session summaries leave the device.
 
 ## Data leaves the device only when
 

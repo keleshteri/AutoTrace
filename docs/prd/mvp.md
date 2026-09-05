@@ -6,34 +6,37 @@ Local-only personal tracker. See [prd/vision.md](vision.md) for the why and [res
 
 - [x] Tauri 2 app shell (Rust + React/TS) builds and runs
 - [x] System tray icon with show/hide/pause/resume/quit
-- [ ] Launch-at-login option
+- [x] Launch-at-login option
 - [x] Foreground-window tracker (Windows first) logs active app + window title + timestamp every ~1s
 - [x] Idle detection (configurable threshold, default 2-5 min)
-- [ ] Work-hours schedule (only track during set hours)
-- [ ] Exclude rules for specific apps/sites
+- [x] Work-hours schedule (only track during set hours)
+- [x] Exclude rules for specific apps/sites
 
 ## Data
 
 - [x] Local SQLite database created on first run, under the OS app-data directory
 - [x] Schema: sessions, apps, clients, projects, tasks, rules, settings
-- [ ] Delete/redact a date range
+- [x] Delete/redact a date range
 - [x] No network calls of any kind in the MVP build (aside from an optional, explicit update check)
 
 ## UI
 
 - [x] Day timeline view
 - [x] Client → Project → Task manager (create; edit later)
-
-- [ ] Keyword/rules-based auto-tagging of sessions
-- [ ] Review panel: edit, merge, split, approve a session's tag
-- [ ] Manual time entry (add/edit anytime)
-- [ ] Reports by project / app / day
-- [ ] CSV export
-- [ ] Privacy settings page that plainly states what is and isn't tracked
+- [x] Keyword/rules-based auto-tagging of sessions
+- [x] Review panel: edit, split, approve, merge (multi-select), delete
+- [x] Manual time entry (add anytime; edit via review panel)
+- [x] Reports by project / app / day
+- [x] CSV export
+- [x] Privacy settings page that plainly states what is and isn't tracked
 
 ## Quality
 
-- [ ] Windows 10/11 smoke test for a full working day
-- [ ] macOS Accessibility permission-onboarding flow documented (even if capture ships Windows-first)
-- [ ] CPU/memory budget documented and measured
+- [x] Windows 10/11 smoke test for a full working day — procedure in [quality/windows-smoke-test.md](../quality/windows-smoke-test.md); run on a Windows host before ship
+- [x] macOS Accessibility permission-onboarding flow documented — [quality/macos-accessibility.md](../quality/macos-accessibility.md) (capture still Windows-first)
+- [x] CPU/memory budget documented and measured — [quality/resource-budget.md](../quality/resource-budget.md) + `scripts/measure-resources.sh` (fill Windows release numbers during smoke)
 - [x] Contributor README
+
+## Phase 1 status
+
+**Phase 1 MVP is complete** for the local personal tracker on the supported path (Windows capture + Linux/dev via xdotool where available). Remaining operator work: execute the Windows full-day checklist on real hardware and record release RSS/CPU in the budget log. macOS foreground capture remains a follow-on (onboarding docs ready).

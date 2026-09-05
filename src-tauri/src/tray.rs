@@ -13,10 +13,26 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause tracking", true, None::<&str>)?;
     let resume = MenuItem::with_id(app, "resume", "Resume tracking", true, None::<&str>)?;
+    let start_focus = MenuItem::with_id(app, "start_focus", "Start Focus", true, None::<&str>)?;
+    let end_focus = MenuItem::with_id(app, "end_focus", "End Focus", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
-    let menu = Menu::with_items(app, &[&show, &hide, &sep, &pause, &resume, &sep, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show,
+            &hide,
+            &sep,
+            &pause,
+            &resume,
+            &sep,
+            &start_focus,
+            &end_focus,
+            &sep,
+            &quit,
+        ],
+    )?;
 
     let icon = app
         .default_window_icon()
@@ -39,6 +55,16 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             "resume" => {
                 if let Some(state) = app.try_state::<AppState>() {
                     state.tracker.resume();
+                }
+            }
+            "start_focus" => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let _ = state.store.start_focus(None, None, None, None);
+                }
+            }
+            "end_focus" => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let _ = state.store.end_focus();
                 }
             }
             "quit" => {

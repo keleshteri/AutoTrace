@@ -1,13 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Sidebar, NavId } from "./components/Sidebar";
 import { DayCalendar } from "./components/DayCalendar";
 import { SummaryPanel } from "./components/SummaryPanel";
 import { SessionDetail } from "./components/SessionDetail";
 import { WorkView } from "./components/WorkView";
 import { SettingsView } from "./components/SettingsView";
+import { RulesView } from "./components/RulesView";
+import { ReportsView } from "./components/ReportsView";
+import { FocusView } from "./components/FocusView";
+import { IntegrationsView } from "./components/IntegrationsView";
+import { TimerView } from "./components/TimerView";
+import { ActivityView } from "./components/ActivityView";
+import { StatusBar } from "./components/StatusBar";
 import {
   api,
   AppStatus,
+  FocusDigest,
+  FocusSession,
   Hierarchy,
   SessionRow,
   todayLocal,
@@ -22,12 +31,21 @@ function App() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [hierarchy, setHierarchy] = useState<Hierarchy | null>(null);
-  const [selected, setSelected] = useState<SessionRow | null>(null);
+  const [focusDigest, setFocusDigest] = useState<FocusDigest | null>(null);
+  const [focus, setFocus] = useState<FocusSession | null>(null);
+  const [focusTick, setFocusTick] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [showManual, setShowManual] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
-      setStatus(await api.getAppStatus());
+      const [s, f] = await Promise.all([
+        api.getAppStatus(),
+        api.getActiveFocus(),
+      ]);
+      setStatus(s);
+      setFocus(f);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -35,15 +53,17 @@ function App() {
 
   const refreshDay = useCallback(async () => {
     try {
-      const [s, h] = await Promise.all([
+      const [s, h, dig] = await Promise.all([
         api.listSessionsForDay(day),
         api.getHierarchy(),
+        api.getFocusDigest(day),
       ]);
       setSessions(s);
       setHierarchy(h);
+      setFocusDigest(dig);
       setError(null);
-      setSelected((prev) =>
-        prev ? (s.find((x) => x.id === prev.id) ?? null) : null,
+      setSelectedIds((prev) =>
+        prev.filter((id) => s.some((x) => x.id === id)),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -62,182 +82,430 @@ function App() {
     return () => window.clearInterval(id);
   }, [refreshDay]);
 
-  async function applyTag(value: string) {
-    if (!selected) return;
-    if (!value) {
-      await api.tagSession(selected.id, null, null, null);
-    } else {
-      const [kind, idStr] = value.split(":");
-      const id = Number(idStr);
-      if (kind === "client") {
-        await api.tagSession(selected.id, id, null, null);
-      } else if (kind === "project") {
-        const client = hierarchy?.clients.find((c) =>
-          c.projects.some((p) => p.id === id),
-        );
-        await api.tagSession(selected.id, client?.id ?? null, id, null);
-      } else if (kind === "task") {
-        let clientId: number | null = null;
-        let projectId: number | null = null;
-        for (const c of hierarchy?.clients ?? []) {
-          for (const p of c.projects) {
-            if (p.tasks.some((t) => t.id === id)) {
-              clientId = c.id;
-              projectId = p.id;
-            }
-          }
-        }
-        await api.tagSession(selected.id, clientId, projectId, id);
+  useEffect(() => {
+    if (!focus || focus.status !== "active") return;
+    const id = window.setInterval(() => setFocusTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [focus?.id, focus?.status]);
+
+  // focusTick forces a re-render each second while active.
+  void focusTick;
+  const liveFocus = focus
+    ? {
+        ...focus,
+        elapsed_secs:
+          focus.status === "active"
+            ? (() => {
+                const raw = focus.started_at.includes("T")
+                  ? focus.started_at
+                  : focus.started_at.replace(" ", "T");
+                const start = Date.parse(raw);
+                if (Number.isNaN(start)) return focus.elapsed_secs;
+                return Math.max(0, Math.floor((Date.now() - start) / 1000));
+              })()
+            : focus.elapsed_secs,
       }
+    : null;
+
+  function selectSession(session: SessionRow, additive: boolean) {
+    setSelectedIds((prev) => {
+      if (additive) {
+        return prev.includes(session.id)
+          ? prev.filter((id) => id !== session.id)
+          : [...prev, session.id];
+      }
+      return [session.id];
+    });
+  }
+
+  const selected =
+    selectedIds.length === 1
+      ? (sessions.find((s) => s.id === selectedIds[0]) ?? null)
+      : null;
+
+  async function mergeSelected() {
+    if (selectedIds.length < 2) return;
+    try {
+      const keepId = await api.mergeSessions(selectedIds);
+      await refreshDay();
+      setSelectedIds([keepId]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
-    await refreshDay();
   }
 
   const showSummary = nav === "calendar";
 
   return (
-    <div className={`app${showSummary ? "" : " no-summary"}`}>
-      <Sidebar
-        active={nav}
-        onNavigate={setNav}
-        trackerStatus={status?.tracker.status ?? "…"}
-        currentApp={status?.tracker.current_app ?? null}
-      />
+    <div className="app-shell">
+      <div className={`app${showSummary ? "" : " no-summary"}`}>
+        <Sidebar
+          active={nav}
+          onNavigate={setNav}
+          trackerStatus={status?.tracker.status ?? "…"}
+          currentApp={status?.tracker.current_app ?? null}
+        />
 
-      <div className="main-col" style={{ position: "relative" }}>
-        {nav === "calendar" && (
-          <>
-            <header className="topbar">
-              <div className="topbar-date">
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => setDay((d) => shiftDay(d, -1))}
-                  aria-label="Previous day"
-                >
-                  ‹
-                </button>
-                <h1>{formatDayHeading(day)}</h1>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => setDay((d) => shiftDay(d, 1))}
-                  aria-label="Next day"
-                >
-                  ›
-                </button>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => setDay(todayLocal())}
-                  title="Today"
-                >
-                  ●
-                </button>
-              </div>
-              <div className="segment" role="group" aria-label="Range">
-                <button type="button" className="active">
-                  Day
-                </button>
-                <button type="button" disabled title="Coming soon">
-                  Week
-                </button>
-                <button type="button" disabled title="Coming soon">
-                  Month
-                </button>
-                <button type="button" disabled title="Coming soon">
-                  Year
-                </button>
-              </div>
-            </header>
-
-            <div className="lane-tabs">
-              {(
-                [
-                  ["entries", "Time entries"],
-                  ["tasks", "Tasks"],
-                  ["projects", "Projects"],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={lane === id ? "active" : undefined}
-                  onClick={() => setLane(id)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {error && <p className="error-banner">{error}</p>}
-
-            <DayCalendar
-              sessions={
-                lane === "entries"
-                  ? sessions
-                  : sessions.filter((s) =>
-                      lane === "tasks" ? s.task_id != null : s.project_id != null,
-                    )
-              }
-              selectedId={selected?.id ?? null}
-              onSelect={setSelected}
-              isToday={day === todayLocal()}
+        <div className="main-col" style={{ position: "relative" }}>
+          {nav === "timer" && (
+            <TimerView
+              focus={liveFocus}
+              hierarchy={hierarchy}
+              onChanged={() => {
+                setFocusTick(0);
+                void refreshStatus();
+                void refreshDay();
+              }}
+              onError={setError}
+              onOpenActivity={() => setNav("activity")}
             />
+          )}
 
-            {selected && (
-              <SessionDetail
-                session={selected}
-                hierarchy={hierarchy}
-                onClose={() => setSelected(null)}
-                onTag={(v) => void applyTag(v)}
+          {nav === "activity" && (
+            <ActivityView
+              day={day}
+              onDayChange={setDay}
+              onError={setError}
+              trackingStatus={status?.tracker.status ?? "…"}
+            />
+          )}
+
+          {nav === "focus" && (
+            <FocusView
+              day={day}
+              onError={setError}
+              onOpenDay={(d) => {
+                setDay(d);
+                setNav("calendar");
+              }}
+            />
+          )}
+
+          {nav === "calendar" && (
+            <>
+              <header className="topbar">
+                <div className="topbar-date">
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => setDay((d) => shiftDay(d, -1))}
+                    aria-label="Previous day"
+                  >
+                    ‹
+                  </button>
+                  <h1>{formatDayHeading(day)}</h1>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => setDay((d) => shiftDay(d, 1))}
+                    aria-label="Next day"
+                  >
+                    ›
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => setDay(todayLocal())}
+                    title="Today"
+                  >
+                    ●
+                  </button>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setShowManual(true)}
+                  >
+                    + Manual
+                  </button>
+                  <div className="segment" role="group" aria-label="Range">
+                    <button type="button" className="active">
+                      Day
+                    </button>
+                    <button type="button" disabled title="Coming soon">
+                      Week
+                    </button>
+                    <button type="button" disabled title="Coming soon">
+                      Month
+                    </button>
+                    <button type="button" disabled title="Coming soon">
+                      Year
+                    </button>
+                  </div>
+                </div>
+              </header>
+
+              <div className="lane-tabs">
+                {(
+                  [
+                    ["entries", "Time entries"],
+                    ["tasks", "Tasks"],
+                    ["projects", "Projects"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={lane === id ? "active" : undefined}
+                    onClick={() => setLane(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <div
+                  style={{
+                    marginLeft: "auto",
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "center",
+                  }}
+                >
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    {selectedIds.length >= 2
+                      ? `${selectedIds.length} selected`
+                      : "⌘/Ctrl+click to multi-select · merge fragmented blocks"}
+                  </span>
+                  {selectedIds.length >= 2 && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => void mergeSelected()}
+                    >
+                      Merge {selectedIds.length}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {error && <p className="error-banner">{error}</p>}
+
+              <DayCalendar
+                sessions={
+                  lane === "entries"
+                    ? sessions
+                    : sessions.filter((s) =>
+                        lane === "tasks"
+                          ? s.task_id != null
+                          : s.project_id != null,
+                      )
+                }
+                selectedIds={selectedIds}
+                onSelect={selectSession}
+                isToday={day === todayLocal()}
               />
-            )}
-          </>
-        )}
 
-        {(nav === "projects" || nav === "clients" || nav === "tasks") && (
-          <WorkView mode={nav} onError={setError} />
-        )}
+              {selected && (
+                <SessionDetail
+                  session={selected}
+                  hierarchy={hierarchy}
+                  onClose={() => setSelectedIds([])}
+                  onSaved={() => void refreshDay()}
+                  onApprove={(approved) =>
+                    void api
+                      .approveSession(selected.id, approved)
+                      .then(refreshDay)
+                  }
+                  onUpdate={(payload) =>
+                    api.updateSession({
+                      sessionId: selected.id,
+                      title: payload.title,
+                      startedAt: payload.startedAt,
+                      endedAt: payload.endedAt,
+                      notes: payload.notes,
+                      clientId: payload.clientId,
+                      projectId: payload.projectId,
+                      taskId: payload.taskId,
+                    })
+                  }
+                  onSplit={(at) =>
+                    api.splitSession(selected.id, at).then(() => undefined)
+                  }
+                  onDelete={() => api.deleteSession(selected.id)}
+                />
+              )}
 
-        {nav === "reports" && (
-          <div className="page">
-            <div className="page-head">
-              <h2>Reports</h2>
-            </div>
-            <div className="kpi-row">
-              <div className="card">
-                <p className="kicker">Today tracked</p>
-                <p className="metric" style={{ fontSize: 22 }}>
-                  {sessions.filter((s) => !s.idle).length} sessions
-                </p>
-              </div>
-              <div className="card">
-                <p className="kicker">Tagged</p>
-                <p className="metric" style={{ fontSize: 22 }}>
-                  {sessions.filter((s) => s.client_id || s.project_id).length}
-                </p>
-              </div>
-              <div className="card">
-                <p className="kicker">Export</p>
-                <p className="muted" style={{ marginTop: 8 }}>
-                  CSV export lands next in MVP.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
+              {showManual && (
+                <ManualEntryModal
+                  day={day}
+                  hierarchy={hierarchy}
+                  onClose={() => setShowManual(false)}
+                  onSaved={() => {
+                    setShowManual(false);
+                    void refreshDay();
+                  }}
+                />
+              )}
+            </>
+          )}
 
-        {nav === "settings" && (
-          <SettingsView
-            status={status}
-            onPause={() => void api.pauseTracking().then(refreshStatus)}
-            onResume={() => void api.resumeTracking().then(refreshStatus)}
-          />
+          {(nav === "projects" || nav === "clients" || nav === "tasks") && (
+            <WorkView mode={nav} onError={setError} />
+          )}
+
+          {nav === "rules" && <RulesView onError={setError} />}
+          {nav === "reports" && <ReportsView onError={setError} />}
+          {nav === "integrations" && <IntegrationsView onError={setError} />}
+
+          {nav === "settings" && (
+            <SettingsView
+              status={status}
+              onPause={() => void api.pauseTracking().then(refreshStatus)}
+              onResume={() => void api.resumeTracking().then(refreshStatus)}
+              onRefreshStatus={() => void refreshStatus()}
+              onError={setError}
+            />
+          )}
+        </div>
+
+        {showSummary && (
+          <SummaryPanel sessions={sessions} digest={focusDigest} />
         )}
       </div>
 
-      {showSummary && <SummaryPanel sessions={sessions} />}
+      <StatusBar
+        trackerStatus={status?.tracker.status ?? "…"}
+        currentApp={status?.tracker.current_app ?? null}
+        focus={liveFocus}
+        onToggleTracking={() => {
+          if (status?.tracker.status === "running") {
+            void api.pauseTracking().then(refreshStatus);
+          } else {
+            void api.resumeTracking().then(refreshStatus);
+          }
+        }}
+        onStartFocus={() => {
+          void api
+            .startFocus()
+            .then(() => {
+              setFocusTick(0);
+              setNav("timer");
+              return refreshStatus();
+            })
+            .catch((e) =>
+              setError(e instanceof Error ? e.message : String(e)),
+            );
+        }}
+        onEndFocus={() => {
+          void api
+            .endFocus()
+            .then(() => {
+              setFocusTick(0);
+              return Promise.all([refreshStatus(), refreshDay()]);
+            })
+            .catch((e) =>
+              setError(e instanceof Error ? e.message : String(e)),
+            );
+        }}
+        onOpenTimer={() => setNav("timer")}
+      />
+    </div>
+  );
+}
+
+function ManualEntryModal({
+  day,
+  hierarchy,
+  onClose,
+  onSaved,
+}: {
+  day: string;
+  hierarchy: Hierarchy | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [start, setStart] = useState("09:00");
+  const [end, setEnd] = useState("10:00");
+  const [projectId, setProjectId] = useState<number | "">("");
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!title.trim()) return;
+    let clientId: number | null = null;
+    let pid: number | null = projectId === "" ? null : projectId;
+    if (pid != null) {
+      for (const c of hierarchy?.clients ?? []) {
+        if (c.projects.some((p) => p.id === pid)) clientId = c.id;
+      }
+    }
+    await api.createManualSession({
+      title: title.trim(),
+      startedAt: `${day}T${start}:00`,
+      endedAt: `${day}T${end}:00`,
+      clientId,
+      projectId: pid,
+      taskId: null,
+    });
+    onSaved();
+  }
+
+  const projects =
+    hierarchy?.clients.flatMap((c) =>
+      c.projects.map((p) => ({ id: p.id, label: `${c.name} / ${p.name}` })),
+    ) ?? [];
+
+  return (
+    <div className="detail-overlay" onClick={onClose}>
+      <form
+        className="detail-card"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => void submit(e)}
+      >
+        <header>
+          <span className="muted">Manual time entry</span>
+          <button type="button" className="icon-btn" onClick={onClose}>
+            ✕
+          </button>
+        </header>
+        <label className="muted">
+          Title
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Client call"
+            style={{ width: "100%", marginTop: 4 }}
+          />
+        </label>
+        <div className="tag-row" style={{ marginTop: 10 }}>
+          <label className="muted">
+            Start
+            <input
+              type="time"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+            />
+          </label>
+          <label className="muted">
+            End
+            <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+          </label>
+          <label className="muted">
+            Project
+            <select
+              value={projectId}
+              onChange={(e) =>
+                setProjectId(e.target.value ? Number(e.target.value) : "")
+              }
+            >
+              <option value="">None</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="detail-actions" style={{ marginTop: 12 }}>
+          <button type="submit" className="primary">
+            Add entry
+          </button>
+          <button type="button" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

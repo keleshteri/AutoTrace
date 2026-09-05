@@ -141,6 +141,16 @@ fn end_live(store: &Store, inner: &Mutex<Inner>) {
 }
 
 fn tick(store: &Store, inner: &Mutex<Inner>) {
+    // Respect work-hours / weekday schedule.
+    let hhmm = Local::now().format("%H:%M").to_string();
+    if !store.within_work_hours(&hhmm).unwrap_or(true) {
+        end_live(store, inner);
+        if let Ok(mut g) = inner.lock() {
+            g.current = None;
+        }
+        return;
+    }
+
     let threshold = store.idle_threshold_secs().unwrap_or(180);
     let idle_secs = capture::idle_seconds().unwrap_or(0);
     let is_idle = idle_secs >= threshold;
@@ -149,7 +159,21 @@ fn tick(store: &Store, inner: &Mutex<Inner>) {
     let sample = if is_idle {
         None
     } else {
-        capture::sample_foreground()
+        capture::sample_foreground().and_then(|s| {
+            if store
+                .is_app_excluded(&s.app_name, s.executable.as_deref())
+                .unwrap_or(false)
+            {
+                return None;
+            }
+            if store
+                .is_excluded_by_rules(&s.app_name, s.title.as_deref(), s.url.as_deref())
+                .unwrap_or(false)
+            {
+                return None;
+            }
+            Some(s)
+        })
     };
 
     let mut g = inner.lock().expect("tracker mutex poisoned");
@@ -181,6 +205,12 @@ fn tick(store: &Store, inner: &Mutex<Inner>) {
     }
 
     if let Some(sample) = sample {
+        let _ = store.record_activity_event(
+            &sample.app_name,
+            sample.title.as_deref(),
+            sample.url.as_deref(),
+            &now,
+        );
         open_session(store, inner, sample, &now, false);
     } else if is_idle {
         open_session(
@@ -208,20 +238,51 @@ fn open_session(
     let Ok(app_id) = store.upsert_app(&sample.app_name, sample.executable.as_deref()) else {
         return;
     };
+
+    let (title, url) = store
+        .filter_capture_fields(sample.title.as_deref(), sample.url.as_deref())
+        .unwrap_or((sample.title.clone(), sample.url.clone()));
+
+    let confirm = store
+        .tracker_settings()
+        .map(|s| s.confirm_before_log)
+        .unwrap_or(false);
+    let tag = if idle {
+        None
+    } else {
+        crate::tagger::suggest(
+            store,
+            &sample.app_name,
+            title.as_deref(),
+            url.as_deref(),
+        )
+    };
+    let confidence = tag.as_ref().map(|t| t.confidence);
+    let pending = confirm && !idle;
+
     let Ok(id) = store.start_session(
         app_id,
-        sample.title.as_deref(),
-        sample.url.as_deref(),
+        title.as_deref(),
+        url.as_deref(),
         now,
         idle,
+        confidence,
+        pending,
     ) else {
         return;
     };
+
+    if let Some(tag) = tag {
+        if tag.client_id.is_some() || tag.project_id.is_some() || tag.task_id.is_some() {
+            let _ = store.tag_session(id, tag.client_id, tag.project_id, tag.task_id);
+        }
+    }
+
     if let Ok(mut g) = inner.lock() {
         g.live = Some(LiveSession {
             id,
             app_name: sample.app_name,
-            title: sample.title,
+            title,
             idle,
         });
     }
