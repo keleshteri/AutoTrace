@@ -1066,12 +1066,323 @@ button {
   background: var(--bg-panel);
 }
 
-/* ——— Activity ——— */
+/* ——— Activity (Rize-inspired) ——— */
 .activity-page {
   overflow: auto;
   height: 100%;
+  padding-bottom: 12px;
 }
 
+.activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.activity-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.activity-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 14px;
+  padding-bottom: 0;
+}
+
+.activity-tabs > button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 14px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-weight: 500;
+}
+
+.activity-tabs > button.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.activity-tracking-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.activity-tracking-status .on {
+  color: var(--success);
+}
+
+.activity-tracking-status .off {
+  color: var(--warning);
+}
+
+.activity-timeline-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.activity-day-strip {
+  position: relative;
+  min-height: 120px;
+  padding: 20px 18px 28px;
+}
+
+.day-strip-track {
+  position: relative;
+  height: 56px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.03),
+    rgba(255, 255, 255, 0.01)
+  );
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.day-strip-block {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  border-radius: 6px;
+  min-width: 3px;
+  opacity: 0.92;
+}
+
+.day-strip-hours {
+  position: relative;
+  height: 20px;
+  margin-top: 8px;
+}
+
+.day-strip-hours span {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+
+.activity-analytics {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.activity-pie-card {
+  min-height: 260px;
+}
+
+.activity-pie-wrap {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  margin: 20px auto 8px;
+}
+
+.activity-pie {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  mask: radial-gradient(circle at center, transparent 54%, #000 55%);
+  -webkit-mask: radial-gradient(circle at center, transparent 54%, #000 55%);
+}
+
+.activity-pie-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.activity-pie-center .metric {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.rize-app-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.rize-app-list li {
+  display: grid;
+  grid-template-columns: 40px 56px 28px 1fr 72px 28px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 4px;
+  border-radius: 8px;
+}
+
+.rize-app-list li:hover {
+  background: var(--bg-hover);
+}
+
+.rize-app-list .pct {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  text-align: right;
+}
+
+.rize-app-list .mini-bar {
+  height: 6px;
+  background: var(--bg-active);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.rize-app-list .mini-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.app-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.app-avatar.lg {
+  width: 36px;
+  height: 36px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.rize-app-list .name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rize-app-list .mins {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.rize-app-list .edit-app {
+  opacity: 0.45;
+}
+
+.rize-app-list li:hover .edit-app {
+  opacity: 1;
+}
+
+.search-wrap {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.search-wrap .search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted-2);
+  pointer-events: none;
+}
+
+.search-wrap .search-input {
+  padding-left: 34px;
+  margin-bottom: 0;
+}
+
+.log-status {
+  margin: 0 0 12px;
+}
+
+.event-date-rule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.event-date-rule::before,
+.event-date-rule::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.rize-event-list {
+  max-height: calc(100vh - 280px);
+}
+
+.rize-event-row {
+  grid-template-columns: 28px 1fr auto !important;
+  align-items: center;
+  gap: 12px !important;
+  padding: 9px 10px !important;
+}
+
+.event-main {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.rize-event-row .event-app {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.rize-event-row .event-title {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.rize-event-row .event-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.event-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* legacy activity bits kept for safety */
 .activity-timeline {
   margin-top: 8px;
 }
@@ -1083,45 +1394,11 @@ button {
   align-items: start;
 }
 
-.activity-total .metric {
-  font-size: 28px;
-  font-weight: 600;
-}
-
-.activity-app-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.activity-app-list li {
-  display: grid;
-  grid-template-columns: 1fr 40px 80px 64px;
-  gap: 8px;
-  align-items: center;
-}
-
-.activity-app-list .bar {
-  height: 6px;
-  background: var(--bg-hover);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.activity-app-list .bar i {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
-
 .activity-log-layout {
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
-  margin-top: 8px;
+  margin-top: 4px;
   min-height: 0;
 }
 
@@ -1138,18 +1415,10 @@ button {
   margin-bottom: 10px;
 }
 
-.event-date-head {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
 .event-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: calc(100vh - 220px);
   overflow: auto;
 }
 
@@ -1170,27 +1439,12 @@ button {
   background: var(--bg-hover);
 }
 
-.event-app {
-  font-weight: 600;
-}
-
-.event-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.event-time {
-  text-align: right;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
 .event-detail header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 8px;
+  gap: 8px;
 }
 
 .event-actions {
@@ -1203,6 +1457,7 @@ button {
 @media (max-width: 960px) {
   .timer-layout,
   .activity-log-layout.with-detail,
+  .activity-analytics,
   .activity-donut-row {
     grid-template-columns: 1fr;
   }
@@ -1210,5 +1465,9 @@ button {
   .timer-side {
     border-left: none;
     border-top: 1px solid var(--border-subtle);
+  }
+
+  .rize-app-list li {
+    grid-template-columns: 36px 40px 24px 1fr 56px 24px;
   }
 }
