@@ -72,11 +72,13 @@ export function SessionDetail({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [billable, setBillable] = useState(session.billable);
 
   useEffect(() => {
     setTitle(session.title ?? "");
     setNotes(session.notes ?? "");
     setCategory(session.category ?? "Other");
+    setBillable(session.billable);
     setDay(toDatePart(session.started_at));
     setStart(toTimeInput(session.started_at));
     setEnd(session.ended_at ? toTimeInput(session.ended_at) : "");
@@ -282,6 +284,22 @@ export function SessionDetail({
                   ))}
                 </select>
               </label>
+              <label className="muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={billable}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setBillable(v);
+                    void api.setSessionBillable(session.id, v).catch((ex) =>
+                      setErr(ex instanceof Error ? ex.message : String(ex)),
+                    );
+                  }}
+                />
+                Billable
+              </label>
+            </div>
+            <div className="tag-row">
               <label className="muted">
                 Start
                 <input

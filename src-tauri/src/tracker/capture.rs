@@ -2,12 +2,30 @@
 
 use serde::Serialize;
 
+use super::browser_url;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CaptureSample {
     pub app_name: String,
     pub executable: Option<String>,
     pub title: Option<String>,
     pub url: Option<String>,
+}
+
+fn with_url(mut sample: CaptureSample) -> CaptureSample {
+    if sample.url.is_none() {
+        sample.url = browser_url::resolve_url(
+            &sample.app_name,
+            sample.title.as_deref(),
+        )
+        .or_else(|| {
+            sample
+                .title
+                .as_deref()
+                .and_then(|t| browser_url::infer_url_from_browser_title(&sample.app_name, t))
+        });
+    }
+    sample
 }
 
 pub type IdleSecs = u64;
@@ -63,12 +81,12 @@ mod platform {
             }
 
             let (app_name, executable) = process_info(pid)?;
-            Some(CaptureSample {
+            Some(super::with_url(CaptureSample {
                 app_name,
                 executable,
                 title,
                 url: None,
-            })
+            }))
         }
     }
 
@@ -184,12 +202,12 @@ mod platform {
             .and_then(|p| std::path::Path::new(p).file_name())
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Unknown".into());
-        Some(CaptureSample {
+        Some(super::with_url(CaptureSample {
             app_name,
             executable: exe,
             title: if title.is_empty() { None } else { Some(title) },
             url: None,
-        })
+        }))
     }
 
     fn sample_hyprland() -> Option<CaptureSample> {
@@ -200,7 +218,12 @@ mod platform {
         let v: serde_json::Value = serde_json::from_str(&json).ok()?;
         let app_name = v.get("class").and_then(|x| x.as_str()).unwrap_or("Unknown").to_string();
         let title = v.get("title").and_then(|x| x.as_str()).map(str::to_string);
-        Some(CaptureSample { app_name, executable: None, title, url: None })
+        Some(super::with_url(CaptureSample {
+            app_name,
+            executable: None,
+            title,
+            url: None,
+        }))
     }
 
     fn sample_sway() -> Option<CaptureSample> {
@@ -209,11 +232,13 @@ mod platform {
         }
         let json = run_stdout(&["swaymsg", "-t", "get_tree"])?;
         let v: serde_json::Value = serde_json::from_str(&json).ok()?;
-        find_focused(&v).map(|(app, title)| CaptureSample {
-            app_name: app,
-            executable: None,
-            title,
-            url: None,
+        find_focused(&v).map(|(app, title)| {
+            super::with_url(CaptureSample {
+                app_name: app,
+                executable: None,
+                title,
+                url: None,
+            })
         })
     }
 
@@ -269,7 +294,12 @@ mod platform {
             r#"tell application "System Events" to get title of first window of (first application process whose frontmost is true)"#,
         )
         .filter(|s| !s.is_empty());
-        Some(CaptureSample { app_name: app, executable: None, title, url: None })
+        Some(super::with_url(CaptureSample {
+            app_name: app,
+            executable: None,
+            title,
+            url: None,
+        }))
     }
 
     pub fn idle_seconds() -> Option<IdleSecs> {

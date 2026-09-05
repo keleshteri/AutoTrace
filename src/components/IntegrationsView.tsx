@@ -286,8 +286,10 @@ export function IntegrationsView({ onError }: Props) {
       <div className="card" style={{ marginBottom: 12 }}>
         <p className="kicker">MCP (via local API)</p>
         <p className="muted">
-          Enable Local export API, then <code>GET /v1/mcp/tools</code> and{" "}
-          <code>POST /v1/mcp</code> with JSON {"{"}&quot;tool&quot;:&quot;day_report&quot;,&quot;arguments&quot;:{"{"}&quot;day&quot;:&quot;YYYY-MM-DD&quot;{"}"}{"}"}.
+          Enable Local export API, then call JSON-RPC 2.0 on <code>POST /v1/mcp</code>{" "}
+          (<code>initialize</code>, <code>tools/list</code>, <code>tools/call</code>) or legacy{" "}
+          <code>{`{"tool":"day_report","arguments":{"day":"YYYY-MM-DD"}}`}</code>. Also{" "}
+          <code>GET /v1/mcp/tools</code>.
         </p>
       </div>
 
@@ -306,7 +308,7 @@ export function IntegrationsView({ onError }: Props) {
         </ul>
       </div>
 
-      <div className="card">
+      <div className="card" style={{ marginBottom: 12 }}>
         <p className="kicker">Recent sync log</p>
         <ul className="tree" style={{ marginTop: 8 }}>
           {logs.slice(0, 30).map((l) => (
@@ -318,6 +320,37 @@ export function IntegrationsView({ onError }: Props) {
           {logs.length === 0 && <li className="muted">No sync attempts yet.</li>}
         </ul>
       </div>
+
+      <PrivacyAuditCard onError={onError} />
+    </div>
+  );
+}
+
+function PrivacyAuditCard({ onError }: { onError: (m: string | null) => void }) {
+  const [rows, setRows] = useState<
+    Awaited<ReturnType<typeof api.listPrivacyAudit>>
+  >([]);
+  useEffect(() => {
+    void api
+      .listPrivacyAudit(50)
+      .then(setRows)
+      .catch((e) => onError(String(e)));
+  }, [onError]);
+  return (
+    <div className="card">
+      <p className="kicker">What left this machine</p>
+      <p className="muted">
+        Local audit of sync pushes, vault locks, and distraction blocks — never sent to a cloud.
+      </p>
+      <ul className="tree" style={{ marginTop: 8 }}>
+        {rows.map((r) => (
+          <li key={r.id}>
+            {r.kind}
+            {r.detail ? ` · ${r.detail}` : ""} · {r.created_at}
+          </li>
+        ))}
+        {rows.length === 0 && <li className="muted">No outbound / privacy events yet.</li>}
+      </ul>
     </div>
   );
 }
@@ -365,10 +398,11 @@ function OauthPanel({
         onClick={() =>
           void api
             .oauthAuthorizeUrl(provider, clientId, redirect)
-            .then((url) => {
-              window.open(url, "_blank");
-              setMsg("Browser opened — paste the auth code below");
-            })
+            .then((url) =>
+              api.openExternalUrl(url).then(() => {
+                setMsg("Browser opened — paste the auth code below after consent");
+              }),
+            )
             .catch((e) => onError(String(e)))
         }
       >

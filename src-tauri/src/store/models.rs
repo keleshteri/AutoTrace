@@ -263,6 +263,23 @@ pub struct SyncLogRow {
     pub synced_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyAuditRow {
+    pub id: i64,
+    pub kind: String,
+    pub detail: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistractionReport {
+    pub day: String,
+    pub context_switches: i64,
+    pub blocked_event_hits: i64,
+    pub focus_score: f32,
+    pub top_distractions: Vec<ReportBucket>,
+}
+
 /// Approved, tagged session summary safe to leave the device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportEntry {

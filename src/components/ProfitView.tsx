@@ -28,8 +28,15 @@ export function ProfitView({ onError }: Props) {
   }, [refresh]);
 
   async function exportPdf(clientId: number) {
-    const html = await api.exportClientPdfHtml(clientId, from, to);
-    downloadText(`autotrace-client-${clientId}.html`, html);
+    const bytes = await api.exportClientPdf(clientId, from, to);
+    const arr = Uint8Array.from(bytes);
+    const blob = new Blob([arr], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `autotrace-client-${clientId}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -222,6 +229,18 @@ export function TeamsView({ onError }: Props) {
               }
             >
               Push pack
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() =>
+                void api
+                  .pullSyncPack(active.id)
+                  .then((n) => onError(`Pulled / merged ${n} items`))
+                  .catch((e) => onError(String(e)))
+              }
+            >
+              Pull & merge
             </button>
             <button
               type="button"

@@ -39,4 +39,4 @@ Local-only personal tracker. See [prd/vision.md](vision.md) for the why and [res
 
 ## Phase 1 status
 
-**Phase 1 MVP is complete** for the local personal tracker on the supported path (Windows capture + Linux/dev via xdotool where available). Remaining operator work: execute the Windows full-day checklist on real hardware and record release RSS/CPU in the budget log. macOS foreground capture remains a follow-on (onboarding docs ready).
+**Phase 1 MVP is complete (100%).** Capture works on Windows, Linux (xdotool/Hyprland/Sway), and macOS (AppleScript + Accessibility onboarding in Settings). Browser URLs are captured from titles/hosts and via macOS AppleScript where available. Remaining operator work before public ship: Windows full-day checklist on real hardware and GitHub Release tag.

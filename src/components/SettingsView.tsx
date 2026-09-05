@@ -590,7 +590,7 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
               void api.setFeatureFlag("distraction_block", v ? "1" : "0");
             }}
           />
-          Soft-block matching apps (skip tracking)
+          Soft-block matching apps (skip tracking). Hard mode also logs to the privacy audit.
         </label>
         <div className="mini-form" style={{ marginTop: 10 }}>
           <input
@@ -609,7 +609,20 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
                 .then(() => setBlockPat(""))
             }
           >
-            Add rule
+            Add soft
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() =>
+              void api
+                .createBlockRule(blockPat.trim(), "app", "hard")
+                .then(() => api.listBlockRules())
+                .then(setRules)
+                .then(() => setBlockPat(""))
+            }
+          >
+            Add hard
           </button>
         </div>
         <ul className="tree" style={{ marginTop: 8 }}>
@@ -648,9 +661,20 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
       </div>
 
       <div className="card" style={{ marginTop: 12 }}>
+        <p className="kicker">Break reminders</p>
+        <BreakReminders onError={onError} />
+      </div>
+
+      <div className="card" style={{ marginTop: 12 }}>
+        <p className="kicker">macOS Accessibility</p>
+        <MacOsHint />
+      </div>
+
+      <div className="card" style={{ marginTop: 12 }}>
         <p className="kicker">Database encryption (opt-in)</p>
         <p className="muted">
-          Creates an AES-256-GCM vault sidecar. Unlock before opening if locked.
+          Encrypts the SQLite file at rest (AES-256-GCM + Argon2). Locking removes the
+          plaintext DB (+ WAL/SHM). Unlock before the next launch.
           {vault?.vault_exists ? " Vault file present." : ""}
         </p>
         <div className="mini-form" style={{ marginTop: 10 }}>
@@ -666,11 +690,15 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
             onClick={() =>
               void api
                 .lockDatabase(pass)
-                .then(() => window.alert("Vault written beside the DB"))
+                .then(() =>
+                  window.alert(
+                    "Database encrypted at rest. Unlock with the same passphrase before relaunching.",
+                  ),
+                )
                 .catch((e) => onError(String(e)))
             }
           >
-            Lock / encrypt copy
+            Lock / encrypt at rest
           </button>
           <button
             type="button"
@@ -678,7 +706,7 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
             onClick={() =>
               void api
                 .unlockDatabase(pass)
-                .then(() => window.alert("Unlocked to DB path"))
+                .then(() => window.alert("Unlocked to DB path — relaunch if needed"))
                 .catch((e) => onError(String(e)))
             }
           >
@@ -686,6 +714,90 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
           </button>
         </div>
       </div>
+    </>
+  );
+}
+
+function BreakReminders({ onError }: { onError: (m: string | null) => void }) {
+  const [on, setOn] = useState(false);
+  const [every, setEvery] = useState("50");
+  const [len, setLen] = useState("5");
+  useEffect(() => {
+    void (async () => {
+      try {
+        setOn((await api.getFeatureFlag("break_reminders")) === "1");
+        setEvery((await api.getFeatureFlag("break_every_mins")) || "50");
+        setLen((await api.getFeatureFlag("break_length_mins")) || "5");
+      } catch (e) {
+        onError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  }, [onError]);
+  return (
+    <>
+      <label className="muted" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => {
+            const v = e.target.checked;
+            setOn(v);
+            void api.setFeatureFlag("break_reminders", v ? "1" : "0");
+          }}
+        />
+        Remind me to take breaks during Focus
+      </label>
+      <div className="mini-form" style={{ marginTop: 10 }}>
+        <label className="muted">
+          Every (min)
+          <input value={every} onChange={(e) => setEvery(e.target.value)} />
+        </label>
+        <label className="muted">
+          Break length (min)
+          <input value={len} onChange={(e) => setLen(e.target.value)} />
+        </label>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            void api.setFeatureFlag("break_every_mins", every);
+            void api.setFeatureFlag("break_length_mins", len);
+          }}
+        >
+          Save
+        </button>
+      </div>
+    </>
+  );
+}
+
+function MacOsHint() {
+  const [hint, setHint] = useState("");
+  useEffect(() => {
+    void api.macosAccessibilityHint().then(setHint);
+  }, []);
+  if (!hint) {
+    return (
+      <p className="muted">
+        Not required on this platform. On macOS, grant Accessibility so AutoTrace can
+        read the frontmost app and window title.
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="muted">{hint}</p>
+      <button
+        type="button"
+        className="btn"
+        onClick={() =>
+          void api.openExternalUrl(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          )
+        }
+      >
+        Open Accessibility settings
+      </button>
     </>
   );
 }

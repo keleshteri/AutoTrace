@@ -257,7 +257,28 @@ WHERE NOT EXISTS (SELECT 1 FROM workspaces);
 UPDATE settings SET value = '7' WHERE key = 'schema_version';
 "#;
 
-pub const SCHEMA_VERSION: i64 = 7;
+const MIGRATION_V8: &str = r#"
+ALTER TABLE focus_sessions ADD COLUMN accumulated_secs INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE focus_sessions ADD COLUMN segment_started_at TEXT;
+ALTER TABLE focus_sessions ADD COLUMN paused_at TEXT;
+
+UPDATE focus_sessions SET segment_started_at = started_at WHERE segment_started_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS privacy_audit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL,
+    detail      TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO settings (key, value) VALUES ('break_reminders', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('break_every_mins', '50');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('break_length_mins', '5');
+
+UPDATE settings SET value = '8' WHERE key = 'schema_version';
+"#;
+
+pub const SCHEMA_VERSION: i64 = 8;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i64 = conn
@@ -311,6 +332,14 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 7 {
         let _ = conn.execute_batch(MIGRATION_V7);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '7')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+    }
+    if current < 8 {
+        let _ = conn.execute_batch(MIGRATION_V8);
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

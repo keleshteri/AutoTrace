@@ -563,6 +563,20 @@ pub fn start_focus(
 }
 
 #[tauri::command]
+pub fn pause_focus(
+    state: State<'_, AppState>,
+) -> Result<Option<crate::store::FocusSession>, String> {
+    state.store.pause_focus().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn resume_focus(
+    state: State<'_, AppState>,
+) -> Result<Option<crate::store::FocusSession>, String> {
+    state.store.resume_focus().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn end_focus(
     state: State<'_, AppState>,
 ) -> Result<Option<crate::store::FocusSession>, String> {
@@ -698,6 +712,19 @@ pub fn export_client_pdf_html(
 }
 
 #[tauri::command]
+pub fn export_client_pdf(
+    state: State<'_, AppState>,
+    client_id: i64,
+    from_day: String,
+    to_day: String,
+) -> Result<Vec<u8>, String> {
+    state
+        .store
+        .client_pdf_bytes(client_id, &from_day, &to_day)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<crate::store::Workspace>, String> {
     state.store.list_workspaces().map_err(|e| e.to_string())
 }
@@ -744,21 +771,128 @@ pub fn push_sync_pack(state: State<'_, AppState>, workspace_id: i64) -> Result<S
         .ok_or_else(|| "set a sync URL on the workspace first".to_string())?;
     let token = state
         .store
-        .list_workspaces()
-        .ok()
-        .and_then(|_| None::<String>);
-    let _ = token;
+        .workspace_sync_token(workspace_id)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
     let client = reqwest::blocking::Client::new();
-    let resp = client
+    let mut req = client
         .post(format!("{}/v1/sync", url.trim_end_matches('/')))
         .header("Content-Type", "application/json")
-        .body(pack.clone())
-        .send()
-        .map_err(|e| e.to_string())?;
+        .body(pack.clone());
+    if !token.is_empty() {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
+    let resp = req.send().map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("sync failed: HTTP {}", resp.status()));
     }
+    let _ = state
+        .store
+        .log_privacy_event("sync_push", Some(&format!("workspace {workspace_id}")));
     Ok(resp.text().unwrap_or_else(|_| "ok".into()))
+}
+
+#[tauri::command]
+pub fn pull_sync_pack(state: State<'_, AppState>, workspace_id: i64) -> Result<i64, String> {
+    let spaces = state.store.list_workspaces().map_err(|e| e.to_string())?;
+    let ws = spaces
+        .into_iter()
+        .find(|w| w.id == workspace_id)
+        .ok_or_else(|| "workspace not found".to_string())?;
+    let url = ws
+        .sync_url
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| "set a sync URL on the workspace first".to_string())?;
+    let token = state
+        .store
+        .workspace_sync_token(workspace_id)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    let client = reqwest::blocking::Client::new();
+    let mut req = client.get(format!("{}/v1/sync/latest", url.trim_end_matches('/')));
+    if !token.is_empty() {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
+    let resp = req.send().map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("pull failed: HTTP {}", resp.status()));
+    }
+    let body = resp.text().map_err(|e| e.to_string())?;
+    if body.contains("\"empty\":true") {
+        return Ok(0);
+    }
+    state
+        .store
+        .import_sync_pack(&body)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn import_sync_pack(state: State<'_, AppState>, json: String) -> Result<i64, String> {
+    state.store.import_sync_pack(&json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_privacy_audit(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<crate::store::PrivacyAuditRow>, String> {
+    state
+        .store
+        .list_privacy_audit(limit.unwrap_or(100))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn distraction_report(
+    state: State<'_, AppState>,
+    day: String,
+) -> Result<crate::store::DistractionReport, String> {
+    state
+        .store
+        .distraction_report(&day)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn macos_accessibility_hint() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(
+            "Grant Accessibility to AutoTrace: System Settings → Privacy & Security → Accessibility → enable AutoTrace, then relaunch."
+                .into(),
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(String::new())
+    }
 }
 
 #[tauri::command]
@@ -797,7 +931,9 @@ pub fn get_feature_flag(state: State<'_, AppState>, key: String) -> Result<Optio
 #[tauri::command]
 pub fn lock_database(state: State<'_, AppState>, passphrase: String) -> Result<(), String> {
     let path = state.store.path().to_path_buf();
-    crate::vault::lock_database(&path, &passphrase, false).map_err(|e| e.to_string())?;
+    // At-rest: encrypt to .db.vault and remove plaintext DB + WAL/SHM. Unlock before next launch.
+    crate::vault::lock_database(&path, &passphrase, true).map_err(|e| e.to_string())?;
+    let _ = state.store.log_privacy_event("vault_lock", Some("database encrypted at rest"));
     state
         .store
         .set_setting("db_encryption", "1")

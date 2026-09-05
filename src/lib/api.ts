@@ -6,6 +6,8 @@ export type TrackerInfo = {
   capture_ready: boolean;
   current_app: string | null;
   current_title: string | null;
+  current_url?: string | null;
+  distraction_blocked?: string | null;
   live_session_id: number | null;
 };
 
@@ -448,6 +450,8 @@ export const api = {
     invoke<ProfitabilityReport>("get_profitability_report", { fromDay, toDay }),
   exportClientPdfHtml: (clientId: number, fromDay: string, toDay: string) =>
     invoke<string>("export_client_pdf_html", { clientId, fromDay, toDay }),
+  exportClientPdf: (clientId: number, fromDay: string, toDay: string) =>
+    invoke<number[]>("export_client_pdf", { clientId, fromDay, toDay }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   createWorkspace: (name: string) => invoke<Workspace>("create_workspace", { name }),
   setActiveWorkspace: (id: number) => invoke<void>("set_active_workspace", { id }),
@@ -460,6 +464,9 @@ export const api = {
   exportSyncPack: () => invoke<string>("export_sync_pack"),
   pushSyncPack: (workspaceId: number) =>
     invoke<string>("push_sync_pack", { workspaceId }),
+  pullSyncPack: (workspaceId: number) =>
+    invoke<number>("pull_sync_pack", { workspaceId }),
+  importSyncPack: (json: string) => invoke<number>("import_sync_pack", { json }),
   listBlockRules: () => invoke<BlockRule[]>("list_block_rules"),
   createBlockRule: (pattern: string, matchField: string, mode: string) =>
     invoke<BlockRule>("create_block_rule", { pattern, matchField, mode }),
@@ -487,6 +494,14 @@ export const api = {
     invoke<number>("sync_google_calendar", { day }),
   syncOutlookCalendar: (day: string) =>
     invoke<number>("sync_outlook_calendar", { day }),
+  pauseFocus: () => invoke<FocusSession | null>("pause_focus"),
+  resumeFocus: () => invoke<FocusSession | null>("resume_focus"),
+  listPrivacyAudit: (limit?: number) =>
+    invoke<PrivacyAuditRow[]>("list_privacy_audit", { limit: limit ?? 100 }),
+  distractionReport: (day: string) =>
+    invoke<DistractionReport>("distraction_report", { day }),
+  openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
+  macosAccessibilityHint: () => invoke<string>("macos_accessibility_hint"),
 };
 
 export type ProfitabilityReport = {
@@ -529,6 +544,21 @@ export type BlockRule = {
   match_field: string;
   mode: string;
   enabled: boolean;
+};
+
+export type PrivacyAuditRow = {
+  id: number;
+  kind: string;
+  detail: string | null;
+  created_at: string;
+};
+
+export type DistractionReport = {
+  day: string;
+  context_switches: number;
+  blocked_event_hits: number;
+  focus_score: number;
+  top_distractions: { key: string; label: string; minutes: number; sessions: number }[];
 };
 
 export type FocusSession = {

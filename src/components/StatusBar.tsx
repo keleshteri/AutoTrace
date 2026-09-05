@@ -1,47 +1,57 @@
 import { useEffect, useRef, useState } from "react";
-import { FocusSession, formatElapsed } from "../lib/api";
+import { FocusSession, formatElapsed, api } from "../lib/api";
 
 type Props = {
   trackerStatus: string;
   currentApp: string | null;
+  distractionBlocked?: string | null;
   focus: FocusSession | null;
+  breakReminder?: string | null;
   onToggleTracking: () => void;
   onStartFocus: () => void;
   onEndFocus: () => void;
+  onPauseFocus?: () => void;
+  onResumeFocus?: () => void;
   onOpenTimer: () => void;
 };
 
-/** Soft ambient pad via Web Audio (no external files). */
-function useAmbientPad(playing: boolean) {
+type TrackId = "space" | "rain" | "focus";
+
+const TRACKS: Record<TrackId, { title: string; freqs: number[]; types: OscillatorType[] }> = {
+  space: { title: "Space Ambience", freqs: [110, 164.81, 220], types: ["sine", "triangle", "sine"] },
+  rain: { title: "Soft Rain", freqs: [80, 120, 180, 240], types: ["sine", "sine", "triangle", "sine"] },
+  focus: { title: "Focus Drone", freqs: [65.41, 98, 130.81], types: ["triangle", "sine", "sine"] },
+};
+
+function useAmbientPad(playing: boolean, track: TrackId) {
   const ctxRef = useRef<AudioContext | null>(null);
   const nodesRef = useRef<{ osc: OscillatorNode; gain: GainNode }[]>([]);
 
   useEffect(() => {
-    if (!playing) {
-      for (const n of nodesRef.current) {
-        try {
-          n.osc.stop();
-        } catch {
-          /* already stopped */
-        }
+    for (const n of nodesRef.current) {
+      try {
+        n.osc.stop();
+      } catch {
+        /* */
       }
-      nodesRef.current = [];
-      void ctxRef.current?.close();
-      ctxRef.current = null;
-      return;
     }
+    nodesRef.current = [];
+    void ctxRef.current?.close();
+    ctxRef.current = null;
+    if (!playing) return;
+
+    const spec = TRACKS[track];
     const ctx = new AudioContext();
     ctxRef.current = ctx;
     const master = ctx.createGain();
-    master.gain.value = 0.04;
+    master.gain.value = track === "rain" ? 0.03 : 0.04;
     master.connect(ctx.destination);
-    const freqs = [110, 164.81, 220];
-    nodesRef.current = freqs.map((f, i) => {
+    nodesRef.current = spec.freqs.map((f, i) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = i === 0 ? "sine" : "triangle";
+      osc.type = spec.types[i] ?? "sine";
       osc.frequency.value = f;
-      gain.gain.value = 0.3 / freqs.length;
+      gain.gain.value = 0.28 / spec.freqs.length;
       osc.connect(gain);
       gain.connect(master);
       osc.start();
@@ -58,22 +68,41 @@ function useAmbientPad(playing: boolean) {
       nodesRef.current = [];
       void ctx.close();
     };
-  }, [playing]);
+  }, [playing, track]);
 }
 
 export function StatusBar({
   trackerStatus,
   currentApp,
+  distractionBlocked,
   focus,
+  breakReminder,
   onToggleTracking,
   onStartFocus,
   onEndFocus,
+  onPauseFocus,
+  onResumeFocus,
   onOpenTimer,
 }: Props) {
   const trackingOn = trackerStatus === "running";
   const focusing = focus?.status === "active";
+  const pausedFocus = focus?.status === "paused";
   const [musicOn, setMusicOn] = useState(false);
-  useAmbientPad(musicOn);
+  const [track, setTrack] = useState<TrackId>("space");
+  useAmbientPad(musicOn, track);
+
+  useEffect(() => {
+    void api.getFeatureFlag("ambient_track").then((v) => {
+      if (v === "rain" || v === "focus" || v === "space") setTrack(v);
+    });
+  }, []);
+
+  function cycleTrack() {
+    const order: TrackId[] = ["space", "rain", "focus"];
+    const next = order[(order.indexOf(track) + 1) % order.length];
+    setTrack(next);
+    void api.setFeatureFlag("ambient_track", next);
+  }
 
   return (
     <footer className="status-bar">
@@ -88,14 +117,17 @@ export function StatusBar({
           ⏻
         </button>
         <div className="status-meta" onClick={onOpenTimer} role="presentation">
-          {focusing ? (
+          {focusing || pausedFocus ? (
             <>
               <span className="focus-ring-mini" />
               <div>
                 <div className="status-time">
-                  {formatElapsed(focus.elapsed_secs)}
+                  {formatElapsed(focus?.elapsed_secs ?? 0)}
+                  {pausedFocus ? " (paused)" : ""}
                 </div>
-                <div className="status-label">Focus time elapsed</div>
+                <div className="status-label">
+                  {breakReminder ?? "Focus time elapsed"}
+                </div>
               </div>
             </>
           ) : (
@@ -104,15 +136,35 @@ export function StatusBar({
                 {trackingOn ? "Tracking" : "Paused"}
               </div>
               <div className="status-label">
-                {currentApp ?? "Tracking status"}
+                {distractionBlocked
+                  ? `Blocked: ${distractionBlocked}`
+                  : (currentApp ?? "Tracking status")}
               </div>
             </div>
           )}
         </div>
         {focusing ? (
-          <button type="button" className="end-focus-btn" onClick={onEndFocus}>
-            End Focus
-          </button>
+          <>
+            {onPauseFocus && (
+              <button type="button" className="end-focus-btn" onClick={onPauseFocus}>
+                Pause
+              </button>
+            )}
+            <button type="button" className="end-focus-btn" onClick={onEndFocus}>
+              End Focus
+            </button>
+          </>
+        ) : pausedFocus ? (
+          <>
+            {onResumeFocus && (
+              <button type="button" className="end-focus-btn" onClick={onResumeFocus}>
+                Resume
+              </button>
+            )}
+            <button type="button" className="end-focus-btn" onClick={onEndFocus}>
+              End Focus
+            </button>
+          </>
         ) : (
           <button type="button" className="end-focus-btn" onClick={onStartFocus}>
             Start Focus
@@ -121,12 +173,17 @@ export function StatusBar({
       </div>
 
       <div className="status-bar-right">
+        {breakReminder && !focusing && !pausedFocus && (
+          <span className="muted" style={{ marginRight: 8, fontSize: 12 }}>
+            {breakReminder}
+          </span>
+        )}
         <div className="ambient-player">
           <div className="ambient-art" aria-hidden>
             <span />
           </div>
           <div className="ambient-meta">
-            <div className="ambient-title">Space Ambience</div>
+            <div className="ambient-title">{TRACKS[track].title}</div>
             <div className="ambient-sub">
               {musicOn ? "Playing (local synth)" : "Focus soundscape"}
             </div>
@@ -142,9 +199,9 @@ export function StatusBar({
           <button
             type="button"
             className="ambient-btn"
-            aria-label="Volume"
-            title="Volume fixed soft"
-            disabled
+            aria-label="Next track"
+            title="Cycle ambient track"
+            onClick={cycleTrack}
           >
             ♪
           </button>

@@ -1,6 +1,6 @@
 # AutoTrace Product Plan — Beat Rize Where It Matters
 
-**Status:** Plan only (awaiting build approval)  
+**Status:** Shipped — Waves T/A/R + Phase 4 complete  
 **Date:** 2026-09-05  
 **Inputs:** Rize docs + product screenshots (Timer, Activity Timeline/Event Log, bottom bar, Tracking Rules, Privacy, schedule)
 
@@ -155,18 +155,13 @@ T1–T4  →  A1–A4  →  T5–T6  →  A5–A8  →  R1–R4  →  X*
 
 ## 8. Decision / build status
 
-**Approved and building:** Wave **T (Timer)** + Wave **A (Activity)** core.
+**Shipped:** Waves **T + A + R + X** and roadmap **Phases 0–4**.
 
-### Shipped in this pass
+### Shipped checklist
 
-- [x] T1–T4 Focus sessions + Timer view + bottom status bar (power + Start/End Focus)
-- [x] T5 Focus ends as calendar time entry; tray Start/End Focus
-- [x] A1–A3 Activity events + Activity Timeline (apps) + Event Log + detail actions
-- [x] A5–A8 Weekday schedule, URL/title privacy, exclude rules, redact titles/URLs
-- [x] A4 Live “Tracking…” block on Calendar (live_session_id + hatched affordance)
-- [x] R1 Category layer (Focus / Code / Meeting / Break / Other) on sessions
-- [x] R2 Stronger auto-chunking (same-app sessions; title changes stay one block)
-- [x] R3 Review panel tabs: Details / Apps / Titles / Event log
-- [x] R4 Keyboard: **A** approve, **N** next pending, **Esc** close
+- [x] T1–T6 Focus sessions + Timer + pause/resume + bottom bar + tray + calendar
+- [x] A1–A8 Activity events, Timeline/Event Log, live Tracking, schedule, privacy, exclude
+- [x] R1–R4 Categories, chunking, review tabs, keyboard shortcuts
+- [x] X1–X5 Privacy audit, billable/rates, distraction score, local ML banks, macOS capture + Accessibility settings
 
-**Personal product (Phases 0–3 + Waves T/A/R): complete.** Phase 4 teams/cloud remains optional later.
+**Personal product (Phases 0–4 + Waves): complete at 100% of planned scope.** Remaining work is release tagging / signing / hardware smoke tests.

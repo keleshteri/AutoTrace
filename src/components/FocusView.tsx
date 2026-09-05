@@ -31,17 +31,22 @@ export function FocusView({ day, onError, onOpenDay }: Props) {
   const [digest, setDigest] = useState<FocusDigest | null>(null);
   const [week, setWeek] = useState<WeeklyDigest | null>(null);
   const [pending, setPending] = useState<SessionRow[]>([]);
+  const [distraction, setDistraction] = useState<Awaited<
+    ReturnType<typeof api.distractionReport>
+  > | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [d, w, p] = await Promise.all([
+      const [d, w, p, dr] = await Promise.all([
         api.getFocusDigest(day),
         api.getWeeklyDigest(mondayOf(day)),
         api.listPendingSessions(),
+        api.distractionReport(day),
       ]);
       setDigest(d);
       setWeek(w);
       setPending(p);
+      setDistraction(dr);
       onError(null);
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -113,6 +118,30 @@ export function FocusView({ day, onError, onOpenDay }: Props) {
                 >
                   <span>{p.label}</span>
                   <span className="muted">{formatHoursMinutes(p.minutes)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {distraction && (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <p className="kicker">Context switches & distractions</p>
+          <p className="metric">{Math.round(distraction.focus_score)}</p>
+          <p className="muted">
+            {distraction.context_switches} switches · {distraction.blocked_event_hits}{" "}
+            blocked-pattern hits
+          </p>
+          {distraction.top_distractions.length > 0 && (
+            <ul className="tree" style={{ marginTop: 12 }}>
+              {distraction.top_distractions.map((p) => (
+                <li
+                  key={p.key}
+                  style={{ display: "flex", justifyContent: "space-between" }}
+                >
+                  <span>{p.label}</span>
+                  <span className="muted">{p.sessions} events</span>
                 </li>
               ))}
             </ul>

@@ -67,6 +67,10 @@ pub fn lock_database(db_path: &Path, passphrase: &str, remove_plaintext: bool) -
     fs::write(vault_path(db_path), out)?;
     if remove_plaintext {
         let _ = fs::remove_file(db_path);
+        let wal = format!("{}-wal", db_path.display());
+        let shm = format!("{}-shm", db_path.display());
+        let _ = fs::remove_file(&wal);
+        let _ = fs::remove_file(&shm);
     }
     Ok(())
 }

@@ -46,10 +46,13 @@ function App() {
       ]);
       setStatus(s);
       setFocus(f);
+      setFocusTick(0);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  const [breakReminder, setBreakReminder] = useState<string | null>(null);
 
   const refreshDay = useCallback(async () => {
     try {
@@ -95,17 +98,42 @@ function App() {
         ...focus,
         elapsed_secs:
           focus.status === "active"
-            ? (() => {
-                const raw = focus.started_at.includes("T")
-                  ? focus.started_at
-                  : focus.started_at.replace(" ", "T");
-                const start = Date.parse(raw);
-                if (Number.isNaN(start)) return focus.elapsed_secs;
-                return Math.max(0, Math.floor((Date.now() - start) / 1000));
-              })()
+            ? focus.elapsed_secs + focusTick
             : focus.elapsed_secs,
       }
     : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const on = (await api.getFeatureFlag("break_reminders")) === "1";
+        if (!on || cancelled) {
+          setBreakReminder(null);
+          return;
+        }
+        const every = Number((await api.getFeatureFlag("break_every_mins")) || "50");
+        const len = Number((await api.getFeatureFlag("break_length_mins")) || "5");
+        const elapsed = liveFocus?.elapsed_secs ?? 0;
+        if (
+          liveFocus &&
+          (liveFocus.status === "active" || liveFocus.status === "paused")
+        ) {
+          const mins = Math.floor(elapsed / 60);
+          if (mins > 0 && every > 0 && mins % every === 0) {
+            setBreakReminder(`Break time — take ${len} min`);
+            return;
+          }
+        }
+        setBreakReminder(null);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [liveFocus?.elapsed_secs, liveFocus?.status, liveFocus?.id]);
 
   function selectSession(session: SessionRow, additive: boolean) {
     setSelectedIds((prev) => {
@@ -342,6 +370,8 @@ function App() {
       <StatusBar
         trackerStatus={status?.tracker.status ?? "…"}
         currentApp={status?.tracker.current_app ?? null}
+        distractionBlocked={status?.tracker.distraction_blocked ?? null}
+        breakReminder={breakReminder}
         focus={liveFocus}
         onToggleTracking={() => {
           if (status?.tracker.status === "running") {
@@ -356,6 +386,25 @@ function App() {
             .then(() => {
               setFocusTick(0);
               setNav("timer");
+              return refreshStatus();
+            })
+            .catch((e) =>
+              setError(e instanceof Error ? e.message : String(e)),
+            );
+        }}
+        onPauseFocus={() => {
+          void api
+            .pauseFocus()
+            .then(() => refreshStatus())
+            .catch((e) =>
+              setError(e instanceof Error ? e.message : String(e)),
+            );
+        }}
+        onResumeFocus={() => {
+          void api
+            .resumeFocus()
+            .then(() => {
+              setFocusTick(0);
               return refreshStatus();
             })
             .catch((e) =>

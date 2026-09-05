@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import {
   api,
   FocusSession,
@@ -23,19 +23,10 @@ export function TimerView({
 }: Props) {
   const [goal, setGoal] = useState("");
   const [projectId, setProjectId] = useState<number | "">("");
-  const [tick, setTick] = useState(0);
   const [panel, setPanel] = useState<"session" | "timeline">("session");
 
-  useEffect(() => {
-    if (!focus || focus.status !== "active") return;
-    const id = window.setInterval(() => setTick((t) => t + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [focus?.id, focus?.status]);
-
-  const elapsed =
-    focus && focus.status === "active"
-      ? focus.elapsed_secs + tick
-      : focus?.elapsed_secs ?? 0;
+  // Parent App already keeps elapsed_secs live while status === active.
+  const elapsed = focus?.elapsed_secs ?? 0;
 
   // Ring progress against a soft 50-minute focus block.
   const target = 50 * 60;
@@ -75,6 +66,24 @@ export function TimerView({
     }
   }
 
+  async function pause() {
+    try {
+      await api.pauseFocus();
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function resume() {
+    try {
+      await api.resumeFocus();
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const projects =
     hierarchy?.clients.flatMap((c) =>
       c.projects.map((p) => ({ id: p.id, label: `${c.name} / ${p.name}` })),
@@ -102,7 +111,9 @@ export function TimerView({
             <div className="timer-caption">
               {focus?.status === "active"
                 ? "Focus time elapsed"
-                : "Ready to focus"}
+                : focus?.status === "paused"
+                  ? "Focus paused"
+                  : "Ready to focus"}
             </div>
           </div>
         </div>
@@ -120,6 +131,14 @@ export function TimerView({
               </button>
               <button
                 type="button"
+                className="timer-ctrl"
+                title="Pause Focus"
+                onClick={() => void pause()}
+              >
+                ❚❚
+              </button>
+              <button
+                type="button"
                 className="timer-ctrl stop"
                 title="End Focus"
                 onClick={() => void end()}
@@ -133,6 +152,25 @@ export function TimerView({
                 onClick={() => setPanel("session")}
               >
                 +
+              </button>
+            </>
+          ) : focus?.status === "paused" ? (
+            <>
+              <button
+                type="button"
+                className="timer-ctrl"
+                title="Resume Focus"
+                onClick={() => void resume()}
+              >
+                ▶
+              </button>
+              <button
+                type="button"
+                className="timer-ctrl stop"
+                title="End Focus"
+                onClick={() => void end()}
+              >
+                ■
               </button>
             </>
           ) : (

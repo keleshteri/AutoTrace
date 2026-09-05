@@ -92,19 +92,39 @@ fn ml_keyword_suggest(app_name: &str, title_l: &str, url_l: &str) -> Option<TagS
             "code",
             &[
                 "github", "gitlab", "pull request", "stack overflow", "localhost", "rust",
-                "typescript", "python", "refactor", "compile", "cargo", "npm",
+                "typescript", "python", "refactor", "compile", "cargo", "npm", "debugger",
+                "stackoverflow", "bitbucket", "jira", "linear.app", "vscode", "cursor",
             ],
-            0.42,
+            0.45,
         ),
         (
             "meeting",
-            &["agenda", "standup", "sync", "1:1", "interview", "webinar"],
-            0.4,
+            &[
+                "agenda", "standup", "sync", "1:1", "interview", "webinar", "zoom.us",
+                "meet.google", "teams.microsoft", "webex",
+            ],
+            0.44,
         ),
         (
             "docs",
-            &["notion", "confluence", "google docs", "readme", "specification"],
+            &[
+                "notion", "confluence", "google docs", "readme", "specification", "wiki",
+                "docs.google", "dropbox paper", "obsidian",
+            ],
+            0.4,
+        ),
+        (
+            "comms",
+            &["slack", "discord", "gmail", "outlook", "telegram", "whatsapp", "messenger"],
             0.38,
+        ),
+        (
+            "distraction",
+            &[
+                "youtube", "twitter", "x.com", "reddit", "netflix", "tiktok", "instagram",
+                "facebook", "twitch",
+            ],
+            0.36,
         ),
     ];
     let mut best: Option<(f32, &'static str)> = None;
@@ -113,7 +133,7 @@ fn ml_keyword_suggest(app_name: &str, title_l: &str, url_l: &str) -> Option<TagS
         if hits == 0 {
             continue;
         }
-        let score = (base + hits as f32 * 0.05).min(0.7);
+        let score = (base + hits as f32 * 0.06).min(0.78);
         if best.map(|(s, _)| score > s).unwrap_or(true) {
             best = Some((score, label));
         }

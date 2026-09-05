@@ -1424,12 +1424,13 @@ impl Store {
         let row = conn
             .query_row(
                 "SELECT f.id, f.goal, f.client_id, f.project_id, f.task_id,
-                        c.name, p.name, t.name, f.started_at, f.ended_at, f.status
+                        c.name, p.name, t.name, f.started_at, f.ended_at, f.status,
+                        IFNULL(f.accumulated_secs, 0), f.segment_started_at, f.paused_at
                  FROM focus_sessions f
                  LEFT JOIN clients c ON c.id = f.client_id
                  LEFT JOIN projects p ON p.id = f.project_id
                  LEFT JOIN tasks t ON t.id = f.task_id
-                 WHERE f.status = 'active'
+                 WHERE f.status IN ('active', 'paused')
                  ORDER BY f.id DESC LIMIT 1",
                 [],
                 map_focus_row,
@@ -1456,13 +1457,65 @@ impl Store {
         {
             let conn = self.conn.lock().expect("store mutex poisoned");
             conn.execute(
-                "INSERT INTO focus_sessions (goal, client_id, project_id, task_id, started_at, status)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'active')",
+                "INSERT INTO focus_sessions (goal, client_id, project_id, task_id, started_at, status, accumulated_secs, segment_started_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'active', 0, ?5)",
                 params![goal, client_id, project_id, task_id, now],
             )?;
         }
         self.get_active_focus()?
             .ok_or_else(|| StoreError::Msg("failed to start focus".into()))
+    }
+
+    pub fn pause_focus(&self) -> Result<Option<FocusSession>> {
+        let Some(active) = self.get_active_focus()? else {
+            return Ok(None);
+        };
+        if active.status != "active" {
+            return Ok(Some(active));
+        }
+        let now = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let segment = active
+            .started_at
+            .clone(); // overwritten below from DB
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let (accum, segment_started): (i64, String) = conn.query_row(
+            "SELECT IFNULL(accumulated_secs,0), IFNULL(segment_started_at, started_at)
+             FROM focus_sessions WHERE id = ?1",
+            params![active.id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let _ = segment;
+        let extra = (parse_local_ts(&now) - parse_local_ts(&segment_started)).max(0);
+        conn.execute(
+            "UPDATE focus_sessions SET status = 'paused', paused_at = ?1, accumulated_secs = ?2
+             WHERE id = ?3",
+            params![now, accum + extra, active.id],
+        )?;
+        drop(conn);
+        self.get_active_focus()
+    }
+
+    pub fn resume_focus(&self) -> Result<Option<FocusSession>> {
+        let Some(active) = self.get_active_focus()? else {
+            return Ok(None);
+        };
+        if active.status != "paused" {
+            return Ok(Some(active));
+        }
+        let now = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        {
+            let conn = self.conn.lock().expect("store mutex poisoned");
+            conn.execute(
+                "UPDATE focus_sessions SET status = 'active', paused_at = NULL, segment_started_at = ?1
+                 WHERE id = ?2",
+                params![now, active.id],
+            )?;
+        }
+        self.get_active_focus()
     }
 
     pub fn end_focus(&self) -> Result<Option<FocusSession>> {
@@ -1474,9 +1527,21 @@ impl Store {
             .to_string();
         {
             let conn = self.conn.lock().expect("store mutex poisoned");
+            let (accum, segment_started, status): (i64, String, String) = conn.query_row(
+                "SELECT IFNULL(accumulated_secs,0), IFNULL(segment_started_at, started_at), status
+                 FROM focus_sessions WHERE id = ?1",
+                params![active.id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            let final_accum = if status == "active" {
+                accum + (parse_local_ts(&now) - parse_local_ts(&segment_started)).max(0)
+            } else {
+                accum
+            };
             conn.execute(
-                "UPDATE focus_sessions SET ended_at = ?1, status = 'ended' WHERE id = ?2",
-                params![now, active.id],
+                "UPDATE focus_sessions SET ended_at = ?1, status = 'ended', accumulated_secs = ?2, paused_at = NULL
+                 WHERE id = ?3",
+                params![now, final_accum, active.id],
             )?;
         }
         // Mirror onto calendar as a tagged manual session.
@@ -1498,7 +1563,8 @@ impl Store {
         let conn = self.conn.lock().expect("store mutex poisoned");
         let row = conn.query_row(
             "SELECT f.id, f.goal, f.client_id, f.project_id, f.task_id,
-                    c.name, p.name, t.name, f.started_at, f.ended_at, f.status
+                    c.name, p.name, t.name, f.started_at, f.ended_at, f.status,
+                    IFNULL(f.accumulated_secs, 0), f.segment_started_at, f.paused_at
              FROM focus_sessions f
              LEFT JOIN clients c ON c.id = f.client_id
              LEFT JOIN projects p ON p.id = f.project_id
@@ -1516,7 +1582,8 @@ impl Store {
         let conn = self.conn.lock().expect("store mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT f.id, f.goal, f.client_id, f.project_id, f.task_id,
-                    c.name, p.name, t.name, f.started_at, f.ended_at, f.status
+                    c.name, p.name, t.name, f.started_at, f.ended_at, f.status,
+                    IFNULL(f.accumulated_secs, 0), f.segment_started_at, f.paused_at
              FROM focus_sessions f
              LEFT JOIN clients c ON c.id = f.client_id
              LEFT JOIN projects p ON p.id = f.project_id
@@ -1912,6 +1979,186 @@ impl Store {
         Ok(payload.to_string())
     }
 
+    pub fn workspace_sync_token(&self, id: i64) -> Result<Option<String>> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.query_row(
+            "SELECT sync_token FROM workspaces WHERE id = ?1",
+            params![id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .map_err(Into::into)
+    }
+
+    /// Merge clients/projects/tasks from a sync pack (by name; does not delete local).
+    pub fn import_sync_pack(&self, json: &str) -> Result<i64> {
+        let v: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| StoreError::Msg(e.to_string()))?;
+        let mut created = 0i64;
+        let clients = v
+            .pointer("/hierarchy/clients")
+            .and_then(|c| c.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for c in clients {
+            let name = c.get("name").and_then(|n| n.as_str()).unwrap_or("").trim();
+            if name.is_empty() {
+                continue;
+            }
+            let color = c.get("color").and_then(|x| x.as_str());
+            let client = match self.hierarchy() {
+                Ok(h) => h.clients.into_iter().find(|x| x.name.eq_ignore_ascii_case(name)),
+                Err(_) => None,
+            };
+            let client_id = if let Some(existing) = client {
+                existing.id
+            } else {
+                created += 1;
+                self.create_client(name, color)?.id
+            };
+            let projects = c
+                .get("projects")
+                .and_then(|p| p.as_array())
+                .cloned()
+                .unwrap_or_default();
+            for p in projects {
+                let pname = p.get("name").and_then(|n| n.as_str()).unwrap_or("").trim();
+                if pname.is_empty() {
+                    continue;
+                }
+                let pcolor = p.get("color").and_then(|x| x.as_str());
+                let existing_p = self.hierarchy()?.clients.iter().find(|c| c.id == client_id).and_then(|c| {
+                    c.projects.iter().find(|x| x.name.eq_ignore_ascii_case(pname)).map(|x| x.id)
+                });
+                let project_id = if let Some(id) = existing_p {
+                    id
+                } else {
+                    created += 1;
+                    self.create_project(client_id, pname, pcolor)?.id
+                };
+                let tasks = p
+                    .get("tasks")
+                    .and_then(|t| t.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                for t in tasks {
+                    let tname = t.get("name").and_then(|n| n.as_str()).unwrap_or("").trim();
+                    if tname.is_empty() {
+                        continue;
+                    }
+                    let exists = self.hierarchy()?.clients.iter().find(|c| c.id == client_id).and_then(|c| {
+                        c.projects.iter().find(|p| p.id == project_id).map(|p| {
+                            p.tasks.iter().any(|x| x.name.eq_ignore_ascii_case(tname))
+                        })
+                    }).unwrap_or(false);
+                    if !exists {
+                        created += 1;
+                        let _ = self.create_task(project_id, tname)?;
+                    }
+                }
+            }
+        }
+        self.log_privacy_event("sync_import", Some(&format!("merged {created} items")))?;
+        Ok(created)
+    }
+
+    pub fn log_privacy_event(&self, kind: &str, detail: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        // Table may not exist on very old DBs mid-migration; ignore failure softly.
+        let _ = conn.execute(
+            "INSERT INTO privacy_audit_log (kind, detail) VALUES (?1, ?2)",
+            params![kind, detail],
+        );
+        Ok(())
+    }
+
+    pub fn list_privacy_audit(&self, limit: i64) -> Result<Vec<PrivacyAuditRow>> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, detail, created_at FROM privacy_audit_log
+             ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                Ok(PrivacyAuditRow {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    detail: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn distraction_report(&self, day: &str) -> Result<DistractionReport> {
+        let events = self.list_activity_events(day, None, 5000)?;
+        let mut switches = 0i64;
+        let mut last_app: Option<String> = None;
+        let mut by_app: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for e in &events {
+            if last_app.as_ref().map(|a| !a.eq_ignore_ascii_case(&e.app_name)).unwrap_or(true) {
+                switches += 1;
+                last_app = Some(e.app_name.clone());
+            }
+            *by_app.entry(e.app_name.clone()).or_default() += 1;
+        }
+        let block_rules = self.list_block_rules().unwrap_or_default();
+        let mut blocked_hits = 0i64;
+        let mut top_distractions = Vec::new();
+        for (app, count) in &by_app {
+            let hit = block_rules.iter().any(|r| {
+                r.enabled
+                    && r.match_field == "app"
+                    && app.to_lowercase().contains(&r.pattern.to_lowercase())
+            });
+            if hit {
+                blocked_hits += count;
+                top_distractions.push(ReportBucket {
+                    key: app.clone(),
+                    label: app.clone(),
+                    minutes: count / 60, // events ≈ seconds at 1Hz-ish title changes; treat as rough
+                    sessions: *count,
+                });
+            }
+        }
+        top_distractions.sort_by(|a, b| b.sessions.cmp(&a.sessions));
+        top_distractions.truncate(5);
+        // Score 0–100: fewer switches and blocked hits → higher focus.
+        let switch_penalty = (switches as f32 / 40.0).min(1.0) * 50.0;
+        let block_penalty = (blocked_hits as f32 / 60.0).min(1.0) * 50.0;
+        let score = (100.0 - switch_penalty - block_penalty).clamp(0.0, 100.0);
+        Ok(DistractionReport {
+            day: day.into(),
+            context_switches: switches,
+            blocked_event_hits: blocked_hits,
+            focus_score: score,
+            top_distractions,
+        })
+    }
+
+    /// Minimal PDF 1.4 bytes for a client profitability summary.
+    pub fn client_pdf_bytes(&self, client_id: i64, from_day: &str, to_day: &str) -> Result<Vec<u8>> {
+        let report = self.profitability_report(from_day, to_day)?;
+        let client = report
+            .by_client
+            .iter()
+            .find(|c| c.key == client_id.to_string());
+        let name = client.map(|c| c.label.as_str()).unwrap_or("Client");
+        let hours = client.map(|c| c.billable_minutes as f64 / 60.0).unwrap_or(0.0);
+        let rev = client.map(|c| c.revenue).unwrap_or(0.0);
+        let rate = client.map(|c| c.rate).unwrap_or(0.0);
+        let lines = [
+            format!("AutoTrace time report"),
+            format!("{name}"),
+            format!("{from_day} to {to_day}"),
+            format!("Billable hours: {hours:.2}"),
+            format!("Rate: ${rate:.2}/hr"),
+            format!("Amount: ${rev:.2}"),
+            "Titles and URLs omitted.".into(),
+        ];
+        Ok(build_simple_pdf(&lines))
+    }
+
     pub fn list_block_rules(&self) -> Result<Vec<BlockRule>> {
         let conn = self.conn.lock().expect("store mutex poisoned");
         let mut stmt = conn.prepare(
@@ -2044,13 +2291,21 @@ fn map_focus_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FocusSession> {
     let started_at: String = row.get(8)?;
     let ended_at: Option<String> = row.get(9)?;
     let status: String = row.get(10)?;
-    let elapsed = if status == "active" {
-        (chrono::Local::now().timestamp() - parse_local_ts(&started_at)).max(0)
-    } else {
-        ended_at
-            .as_ref()
-            .map(|e| (parse_local_ts(e) - parse_local_ts(&started_at)).max(0))
-            .unwrap_or(0)
+    let accumulated: i64 = row.get::<_, i64>(11).unwrap_or(0);
+    let segment_started: Option<String> = row.get(12)?;
+    let now = chrono::Local::now().timestamp();
+    let elapsed = match status.as_str() {
+        "active" => {
+            let seg = segment_started.as_deref().unwrap_or(&started_at);
+            accumulated + (now - parse_local_ts(seg)).max(0)
+        }
+        "paused" => accumulated,
+        _ => {
+            ended_at
+                .as_ref()
+                .map(|_| accumulated)
+                .unwrap_or(accumulated)
+        }
     };
     Ok(FocusSession {
         id: row.get(0)?,
@@ -2105,6 +2360,49 @@ fn domain_only(url: &str) -> String {
         .next()
         .unwrap_or(without_scheme)
         .to_string()
+}
+
+/// Tiny PDF writer (Helvetica) — enough for a client summary page.
+fn build_simple_pdf(lines: &[String]) -> Vec<u8> {
+    let mut content = String::from("BT /F1 12 Tf 50 750 Td 14 TL\n");
+    for (i, line) in lines.iter().enumerate() {
+        let safe = line.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)");
+        if i == 0 {
+            content.push_str(&format!("({safe}) Tj\n"));
+        } else {
+            content.push_str(&format!("T* ({safe}) Tj\n"));
+        }
+    }
+    content.push_str("ET");
+    let content_bytes = content.as_bytes();
+    let objects: Vec<String> = vec![
+        "1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n".into(),
+        "2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n".into(),
+        "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> >>endobj\n".into(),
+        format!(
+            "4 0 obj<< /Length {} >>stream\n{}\nendstream\nendobj\n",
+            content_bytes.len(),
+            content
+        ),
+        "5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n".into(),
+    ];
+    let mut out = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for obj in &objects {
+        offsets.push(out.len());
+        out.push_str(obj);
+    }
+    let xref_at = out.len();
+    out.push_str(&format!("xref\n0 {}\n", objects.len() + 1));
+    out.push_str("0000000000 65535 f \n");
+    for off in offsets {
+        out.push_str(&format!("{off:010} 00000 n \n"));
+    }
+    out.push_str(&format!(
+        "trailer<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF",
+        objects.len() + 1
+    ));
+    out.into_bytes()
 }
 
 /// If schedule_json is a non-empty object, evaluate weekday gate. `None` = fall back to work_hours.

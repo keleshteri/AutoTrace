@@ -26,6 +26,9 @@ pub struct TrackerInfo {
     pub capture_ready: bool,
     pub current_app: Option<String>,
     pub current_title: Option<String>,
+    pub current_url: Option<String>,
+    /// Soft/hard distraction block hit (pattern label).
+    pub distraction_blocked: Option<String>,
     /// Active open session id (touched every second while tracking).
     pub live_session_id: Option<i64>,
 }
@@ -41,6 +44,7 @@ struct Inner {
     status: TrackerStatus,
     current: Option<CaptureSample>,
     live: Option<LiveSession>,
+    distraction_blocked: Option<String>,
 }
 
 pub struct TrackerHandle {
@@ -55,6 +59,7 @@ impl TrackerHandle {
             status: TrackerStatus::Running,
             current: None,
             live: None,
+            distraction_blocked: None,
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let inner_clone = Arc::clone(&inner);
@@ -80,6 +85,8 @@ impl TrackerHandle {
             capture_ready: capture::capture_supported(),
             current_app: g.current.as_ref().map(|c| c.app_name.clone()),
             current_title: g.current.as_ref().and_then(|c| c.title.clone()),
+            current_url: g.current.as_ref().and_then(|c| c.url.clone()),
+            distraction_blocked: g.distraction_blocked.clone(),
             live_session_id: g.live.as_ref().map(|l| l.id),
         }
     }
@@ -157,6 +164,9 @@ fn tick(store: &Store, inner: &Mutex<Inner>) {
     let now = Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
 
     let sample = if is_idle {
+        if let Ok(mut g) = inner.lock() {
+            g.distraction_blocked = None;
+        }
         None
     } else {
         capture::sample_foreground().and_then(|s| {
@@ -175,9 +185,19 @@ fn tick(store: &Store, inner: &Mutex<Inner>) {
             if let Ok(Some(mode)) =
                 store.is_distraction_blocked(&s.app_name, s.title.as_deref(), s.url.as_deref())
             {
-                // soft = don't track; hard = same for now (OS focus-assist later)
-                let _ = mode;
+                let label = format!("{} ({})", s.app_name, mode);
+                if let Ok(mut g) = inner.lock() {
+                    g.distraction_blocked = Some(label.clone());
+                }
+                let _ = store.log_privacy_event(
+                    "distraction_block",
+                    Some(&format!("{} blocked via {}", s.app_name, mode)),
+                );
+                // soft = skip tracking; hard = skip + keep blocked flag visible
                 return None;
+            }
+            if let Ok(mut g) = inner.lock() {
+                g.distraction_blocked = None;
             }
             Some(s)
         })

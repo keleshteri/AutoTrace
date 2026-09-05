@@ -1,6 +1,6 @@
 # Backlog
 
-See [prd/mvp.md](../prd/mvp.md) for the MVP checklist. This file is everything beyond MVP, roughly in priority order.
+See [prd/mvp.md](../prd/mvp.md) for the MVP checklist. Phases 1–4 product scope is complete; remaining items are polish / ops.
 
 ## P1 — Phase 2 (smart tagging + focus) — done
 
@@ -8,8 +8,9 @@ See [prd/mvp.md](../prd/mvp.md) for the MVP checklist. This file is everything b
 - [x] Focus time + weekly digest
 - [x] Calendar integration (opt-in) — ICS import; meetings become suggested sessions
 - [x] Merge/split sessions in the review panel
-- [ ] Optional local database encryption
-- [ ] Live calendar provider sync (deferred beyond Phase 2)
+- [x] Optional local database encryption (at-rest vault)
+- [x] Live calendar provider sync (Google / Outlook OAuth)
+- [x] Break reminders
 
 ## P2 — Phase 3 integrations (all user opt-in) — done
 
@@ -17,12 +18,19 @@ See [prd/mvp.md](../prd/mvp.md) for the MVP checklist. This file is everything b
 - [x] ClickUp push of approved tagged entries, opt-in
 - [x] Webhooks for approved time entries
 - [x] Public local API (localhost, token-gated) for AutoTrace data
-- [ ] MCP server (later stretch)
-- [ ] ClickUp OAuth (token path ships; OAuth later)
-## P3 — teams and beyond
+- [x] MCP JSON-RPC server on local API
+- [x] ClickUp OAuth (plus Google / Outlook)
 
-- [ ] Optional team/cloud workspace
-- [ ] Utilization and profitability dashboards
-- [ ] Client-facing PDF reports
-- [ ] Linux support (foreground capture beyond xdotool)
-- [ ] Distraction blocker
+## P3 — teams and beyond — done (local-first)
+
+- [x] Optional team/cloud workspace (local workspaces + sync-server)
+- [x] Utilization and profitability dashboards
+- [x] Client-facing PDF reports
+- [x] Linux support (xdotool + Hyprland + Sway)
+- [x] Distraction blocker (soft / hard)
+
+## Ops / ship (not product gaps)
+
+- [ ] Tag `v0.1.0` and publish GitHub Release installers
+- [ ] Windows full-day smoke + resource budget numbers on release build
+- [ ] Optional code signing / notarization secrets
