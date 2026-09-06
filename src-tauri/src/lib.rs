@@ -19,6 +19,8 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let state = commands::init_state(app.handle())?;
             app.manage(state);
@@ -115,6 +117,7 @@ pub fn run() {
             commands::list_privacy_audit,
             commands::distraction_report,
             commands::open_external_url,
+            commands::check_github_update,
             commands::macos_accessibility_hint,
             commands::list_ai_providers,
             commands::upsert_ai_provider,

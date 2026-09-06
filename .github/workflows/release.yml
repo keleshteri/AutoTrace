@@ -83,6 +83,28 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
+      - name: Configure updater signing
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
+            echo "No TAURI_SIGNING_PRIVATE_KEY — building installers without updater artifacts."
+            echo "Add the secret (see docs/release.md) for in-app Download & install."
+            python3 - <<'PY'
+          import json
+          path = "src-tauri/tauri.conf.json"
+          with open(path) as f:
+              cfg = json.load(f)
+          cfg.setdefault("bundle", {})["createUpdaterArtifacts"] = False
+          with open(path, "w") as f:
+              json.dump(cfg, f, indent=2)
+              f.write("\n")
+          PY
+          else
+            echo "Updater signing key present — will publish latest.json + signatures."
+          fi
+
       - name: Resolve release tag
         id: ver
         shell: bash
@@ -102,7 +124,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Unsigned builds are fine for early releases (SmartScreen / Gatekeeper warnings expected).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.ver.outputs.tag }}
           releaseName: AutoTrace ${{ steps.ver.outputs.tag }}
@@ -118,10 +141,14 @@ jobs:
             | **macOS Apple Silicon** | `.dmg` / `.app` (arm64) |
             | **macOS Intel** | `.dmg` / `.app` (x64) |
 
+            ### Updates
+            - In-app: **Settings → Account → Check for updates**
+            - Signed updater manifest: `latest.json` (when signing secrets are configured)
+
             ### Notes
             - Early builds may be **unsigned** — Windows SmartScreen / macOS Gatekeeper can warn; choose “More info → Run anyway” or right-click → Open on macOS.
             - AutoTrace stays **local-first**; cloud sync / OAuth are optional.
-            - See `docs/release.md` for build details.
+            - See `docs/release.md` for build + updater details.
           releaseDraft: false
           prerelease: false
           projectPath: .

@@ -894,6 +894,86 @@ pub fn open_external_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GithubUpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub update_available: bool,
+    pub release_url: String,
+    pub release_notes: String,
+    pub published_at: String,
+}
+
+fn parse_semver_parts(v: &str) -> Option<(u64, u64, u64)> {
+    let cleaned = v.trim().trim_start_matches('v');
+    let mut it = cleaned.split('.');
+    let major = it.next()?.parse().ok()?;
+    let minor = it.next().unwrap_or("0").parse().unwrap_or(0);
+    let patch = it
+        .next()
+        .unwrap_or("0")
+        .split('-')
+        .next()
+        .unwrap_or("0")
+        .parse()
+        .unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+fn version_newer(latest: &str, current: &str) -> bool {
+    match (parse_semver_parts(latest), parse_semver_parts(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => latest.trim_start_matches('v') != current.trim_start_matches('v'),
+    }
+}
+
+#[tauri::command]
+pub fn check_github_update() -> Result<GithubUpdateInfo, String> {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let url = "https://api.github.com/repos/keleshteri/AutoTrace/releases/latest";
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("AutoTrace-Updater")
+        .timeout(std::time::Duration::from_secs(12))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client.get(url).send().map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub releases HTTP {}", resp.status()));
+    }
+    let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let tag = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let latest = tag.trim_start_matches('v').to_string();
+    let release_url = body
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://github.com/keleshteri/AutoTrace/releases")
+        .to_string();
+    let notes = body
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .chars()
+        .take(1200)
+        .collect::<String>();
+    let published_at = body
+        .get("published_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(GithubUpdateInfo {
+        update_available: version_newer(&latest, &current),
+        current_version: current,
+        latest_version: latest,
+        release_url,
+        release_notes: notes,
+        published_at,
+    })
+}
+
 #[tauri::command]
 pub fn macos_accessibility_hint() -> Result<String, String> {
     #[cfg(target_os = "macos")]

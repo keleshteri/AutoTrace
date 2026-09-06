@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "category": "Productivity",
     "shortDescription": "Privacy-first local automatic time tracker",
     "longDescription": "AutoTrace tracks your work time locally on your machine. No cloud account required for the core product.",
@@ -57,6 +58,14 @@
         "appPosition": { "x": 180, "y": 170 },
         "applicationFolderPosition": { "x": 480, "y": 170 }
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg5RUIwMDRCQTZEMTFDRTIKUldUaUhOR21Td0RyaVdNdXRhQ2owUUdWUEVZTG1FNVkvZC8rOW1zTE5xS3JtSE9UY1NaSkpCcWYK",
+      "endpoints": [
+        "https://github.com/keleshteri/AutoTrace/releases/latest/download/latest.json"
+      ]
     }
   }
 }

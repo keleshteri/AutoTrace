@@ -503,6 +503,15 @@ export const api = {
   distractionReport: (day: string) =>
     invoke<DistractionReport>("distraction_report", { day }),
   openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
+  checkGithubUpdate: () =>
+    invoke<{
+      current_version: string;
+      latest_version: string;
+      update_available: boolean;
+      release_url: string;
+      release_notes: string;
+      published_at: string;
+    }>("check_github_update"),
   macosAccessibilityHint: () => invoke<string>("macos_accessibility_hint"),
 
   listAiProviders: () => invoke<AiProvider[]>("list_ai_providers"),

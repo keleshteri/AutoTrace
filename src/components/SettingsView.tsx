@@ -8,6 +8,7 @@ import {
   formatTime,
   todayLocal,
 } from "../lib/api";
+import { UpdatePanel } from "./UpdatePanel";
 
 type Props = {
   status: AppStatus | null;
@@ -430,15 +431,19 @@ export function SettingsView({
 
       <div className="settings-pane">
         {section === "account" && (
-          <SettingsShell
-            title="Account"
-            blurb="Profile and sign-in options. AutoTrace has no cloud account — this layout matches Rory for familiarity."
-            rows={[
-              { label: "Display name", value: "Local user", hint: "Stored on this device only" },
-              { label: "Email", value: "Not set", hint: "No cloud login" },
-              { label: "Password", value: "N/A" },
-            ]}
-          />
+          <>
+            <UpdatePanel />
+            <div style={{ height: 16 }} />
+            <SettingsShell
+              title="Account"
+              blurb="Profile and sign-in options. AutoTrace has no cloud account — this layout matches Rory for familiarity."
+              rows={[
+                { label: "Display name", value: "Local user", hint: "Stored on this device only" },
+                { label: "Email", value: "Not set", hint: "No cloud login" },
+                { label: "Password", value: "N/A" },
+              ]}
+            />
+          </>
         )}
         {section === "notifications" && (
           <SettingsShell

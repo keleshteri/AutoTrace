@@ -63,3 +63,37 @@ Keep these in sync:
 - `src-tauri/Cargo.toml` → `version`
 
 Tag format: `vMAJOR.MINOR.PATCH` (example `v0.1.0`).
+
+## In-app updates
+
+Users can open **Settings → Account → Check for updates**.
+
+| Mode | What happens |
+|---|---|
+| **GitHub check** | Compares installed version to the latest [GitHub Release](https://github.com/keleshteri/AutoTrace/releases). Opens the download page if newer. |
+| **Signed install** | When CI publishes `latest.json` + `.sig` artifacts, the app can **Download & install** and restart (Tauri updater). |
+
+### One-time: add signing secrets (required for in-app install)
+
+A keypair was generated for this repo (public key is in `tauri.conf.json`). Keep the **private** key only in GitHub secrets:
+
+```bash
+chmod +x scripts/print-updater-secrets.sh
+./scripts/print-updater-secrets.sh
+```
+
+Add repo secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY` — full private key contents from `.keys/autotrace.key`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — empty if the key has no password
+
+If you lose the private key, generate a new pair, update `plugins.updater.pubkey` in `tauri.conf.json`, and ship a **manual** installer once — existing installs cannot verify updates signed with a new key.
+
+### Publish a version users can update to
+
+1. Bump versions in the three files above.
+2. Commit, tag `vX.Y.Z`, push the tag.
+3. Wait for **Actions → Release** to finish (needs the signing secrets for updater artifacts).
+4. Existing installs: **Settings → Check for updates** → Download & install.
+
+Without signing secrets, Release still builds installers; users update by downloading from GitHub Releases.
