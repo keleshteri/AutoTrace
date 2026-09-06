@@ -1,7 +1,7 @@
 {
   "name": "autotrace",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Privacy-first local-only automatic time tracker",
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "release:local": "bash scripts/release-local.sh",
+    "release:bump": "bash scripts/bump-version.sh",
     "ai:sidecar": "npm --prefix ai-sidecar start",
     "ai:sidecar:install": "npm --prefix ai-sidecar install"
   },

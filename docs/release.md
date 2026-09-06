@@ -56,13 +56,29 @@ Requirements:
 
 ## Version bumps
 
-Keep these in sync:
+Run the bump script (updates all three files together):
 
-- `package.json` → `version`
-- `src-tauri/tauri.conf.json` → `version`
-- `src-tauri/Cargo.toml` → `version`
+```bash
+pnpm release:bump
+# or: ./scripts/bump-version.sh
+```
 
-Tag format: `vMAJOR.MINOR.PATCH` (example `v0.1.0`).
+It asks **patch / minor / major / custom**, then writes the same version to:
+
+- `package.json`
+- `src-tauri/tauri.conf.json`
+- `src-tauri/Cargo.toml`
+
+Non-interactive:
+
+```bash
+pnpm release:bump -- patch
+pnpm release:bump -- minor
+pnpm release:bump -- major
+pnpm release:bump -- 0.2.0
+```
+
+Tag format: `vMAJOR.MINOR.PATCH` (example `v0.2.0`).
 
 ## In-app updates
 
