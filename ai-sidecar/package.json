@@ -1,0 +1,17 @@
+{
+  "name": "autotrace-ai-sidecar",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "LangGraph.js sidecar for AutoTrace local AI agents",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.40",
+    "@langchain/langgraph": "^0.2.49",
+    "@langchain/openai": "^0.4.4",
+    "@langchain/anthropic": "^0.3.15"
+  }
+}

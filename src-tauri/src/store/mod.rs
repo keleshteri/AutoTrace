@@ -3,6 +3,7 @@
 //! Data lives under the OS app-data directory. Nothing is synced unless the
 //! user later enables an opt-in integration (out of scope for MVP).
 
+mod ai;
 mod models;
 mod schema;
 

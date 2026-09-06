@@ -1,3 +1,4 @@
+mod ai;
 mod commands;
 mod integrations;
 mod store;
@@ -114,6 +115,19 @@ pub fn run() {
             commands::distraction_report,
             commands::open_external_url,
             commands::macos_accessibility_hint,
+            commands::list_ai_providers,
+            commands::upsert_ai_provider,
+            commands::delete_ai_provider,
+            commands::test_ai_provider,
+            commands::list_ai_budgets,
+            commands::set_ai_budget,
+            commands::get_ai_usage_summary,
+            commands::list_ai_templates,
+            commands::list_ai_chats,
+            commands::create_ai_chat,
+            commands::list_ai_messages,
+            commands::run_ai_agent,
+            commands::ai_sidecar_status,
 
         ])
         .build(tauri::generate_context!())

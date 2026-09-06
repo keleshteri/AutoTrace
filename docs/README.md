@@ -8,9 +8,9 @@
 |---|---|
 | [research/](research/) | Competitor study (Rize, Timely, Memtime, RescueTime, Toggl, Hubstaff) and the resulting feature matrix |
 | [prd/](prd/) | Product vision and MVP checklist |
-| [architecture/](architecture/) | System design and module breakdown |
+| [architecture/](architecture/) | System design, local API, AI agents |
 | [decisions/](decisions/) | Locked decisions and the stack-choice rationale |
-| [privacy/](privacy/) | What's tracked, what never is, and how opt-in integrations work |
+| [privacy/](privacy/) | What's tracked, what never is, and how opt-in integrations / AI work |
 | [timeline/](timeline/) | Phased roadmap |
 | [tasks/](tasks/) | Backlog beyond MVP |
 

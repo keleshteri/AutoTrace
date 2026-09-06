@@ -1139,3 +1139,166 @@ pub fn sync_outlook_calendar(state: State<'_, AppState>, day: String) -> Result<
     }
     Ok(n)
 }
+
+// —— AI (opt-in) ——
+
+#[tauri::command]
+pub fn list_ai_providers(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::store::AiProvider>, String> {
+    state.store.list_ai_providers().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn upsert_ai_provider(
+    state: State<'_, AppState>,
+    id: Option<i64>,
+    kind: String,
+    label: String,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    enabled: bool,
+    is_default: bool,
+    allowed_models: Vec<String>,
+    max_tokens_per_request: i64,
+    temperature_cap: f32,
+) -> Result<crate::store::AiProvider, String> {
+    let enc = match api_key {
+        Some(k) if !k.is_empty() => Some(crate::ai::encrypt_provider_key(&state.store, &k)?),
+        Some(_) => Some(String::new()),
+        None => None,
+    };
+    state
+        .store
+        .upsert_ai_provider(
+            id,
+            &kind,
+            &label,
+            base_url.as_deref(),
+            enc.as_deref(),
+            enabled,
+            is_default,
+            &allowed_models,
+            max_tokens_per_request,
+            temperature_cap,
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_ai_provider(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    state.store.delete_ai_provider(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn test_ai_provider(
+    state: State<'_, AppState>,
+    provider_id: i64,
+) -> Result<crate::store::AiRunResult, String> {
+    crate::ai::test_provider(&state.store, provider_id)
+}
+
+#[tauri::command]
+pub fn list_ai_budgets(state: State<'_, AppState>) -> Result<Vec<crate::store::AiBudget>, String> {
+    state.store.list_ai_budgets().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_ai_budget(
+    state: State<'_, AppState>,
+    period: String,
+    token_limit: i64,
+    request_limit: i64,
+    cost_usd_limit: Option<f64>,
+    warn_at_pct: f32,
+) -> Result<crate::store::AiBudget, String> {
+    state
+        .store
+        .set_ai_budget(&period, token_limit, request_limit, cost_usd_limit, warn_at_pct)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_ai_usage_summary(
+    state: State<'_, AppState>,
+) -> Result<crate::store::AiUsageSummary, String> {
+    state.store.ai_usage_summary().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_ai_templates(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::store::AiTemplate>, String> {
+    state.store.list_ai_templates().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_ai_chats(state: State<'_, AppState>) -> Result<Vec<crate::store::AiChat>, String> {
+    state.store.list_ai_chats().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_ai_chat(
+    state: State<'_, AppState>,
+    title: String,
+) -> Result<crate::store::AiChat, String> {
+    state.store.create_ai_chat(&title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_ai_messages(
+    state: State<'_, AppState>,
+    chat_id: i64,
+) -> Result<Vec<crate::store::AiMessage>, String> {
+    state
+        .store
+        .list_ai_messages(chat_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn run_ai_agent(
+    state: State<'_, AppState>,
+    agent: String,
+    prompt: String,
+    system: Option<String>,
+    model: Option<String>,
+    chat_id: Option<i64>,
+    template_slug: Option<String>,
+    variables: Option<serde_json::Value>,
+    day: Option<String>,
+) -> Result<crate::store::AiRunResult, String> {
+    crate::ai::run_agent(
+        &state.store,
+        crate::ai::AgentRequest {
+            agent,
+            model,
+            prompt,
+            system,
+            chat_id,
+            template_slug,
+            variables,
+            day,
+        },
+    )
+}
+
+#[tauri::command]
+pub fn ai_sidecar_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let url = state
+        .store
+        .get_setting("ai_sidecar_url")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "http://127.0.0.1:17991".into());
+    let healthy = reqwest::blocking::Client::new()
+        .get(format!("{}/health", url.trim_end_matches('/')))
+        .timeout(std::time::Duration::from_millis(500))
+        .send()
+        .map(|r| r.status().is_success())
+        .unwrap_or(false);
+    Ok(serde_json::json!({
+        "url": url,
+        "healthy": healthy,
+        "ai_enabled": state.store.ai_enabled(),
+    }))
+}

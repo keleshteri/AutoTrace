@@ -280,6 +280,98 @@ pub struct DistractionReport {
     pub top_distractions: Vec<ReportBucket>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiProvider {
+    pub id: i64,
+    pub kind: String,
+    pub label: String,
+    pub base_url: Option<String>,
+    pub has_api_key: bool,
+    pub enabled: bool,
+    pub is_default: bool,
+    pub allowed_models: Vec<String>,
+    pub max_tokens_per_request: i64,
+    pub temperature_cap: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiBudget {
+    pub id: i64,
+    pub period: String,
+    pub token_limit: i64,
+    pub request_limit: i64,
+    pub cost_usd_limit: Option<f64>,
+    pub warn_at_pct: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiUsageRow {
+    pub id: i64,
+    pub provider_id: Option<i64>,
+    pub model: String,
+    pub agent: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: Option<f64>,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiUsageSummary {
+    pub day_tokens: i64,
+    pub day_requests: i64,
+    pub month_tokens: i64,
+    pub month_requests: i64,
+    pub day_budget: Option<AiBudget>,
+    pub month_budget: Option<AiBudget>,
+    pub warn: bool,
+    pub blocked: bool,
+    pub recent: Vec<AiUsageRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiTemplate {
+    pub id: i64,
+    pub slug: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub agent: String,
+    pub system_prompt: String,
+    pub user_prompt_template: String,
+    pub output_schema_json: Option<String>,
+    pub version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiChat {
+    pub id: i64,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiMessage {
+    pub id: i64,
+    pub chat_id: i64,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiRunResult {
+    pub text: String,
+    pub model: String,
+    pub agent: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub warning: Option<String>,
+}
+
 /// Approved, tagged session summary safe to leave the device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportEntry {

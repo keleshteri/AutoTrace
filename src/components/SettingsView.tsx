@@ -222,6 +222,126 @@ function CalendarImportCard({
   );
 }
 
+type SettingsSection =
+  | "account"
+  | "notifications"
+  | "billing"
+  | "usage"
+  | "privacy"
+  | "theme"
+  | "coach"
+  | "focus"
+  | "blocker"
+  | "activity"
+  | "breaks"
+  | "meetings"
+  | "time_entries"
+  | "labels"
+  | "rules"
+  | "agent"
+  | "ws_settings"
+  | "members"
+  | "planning"
+  | "teams"
+  | "calendars"
+  | "integrations"
+  | "api"
+  | "export"
+  | "mcp";
+
+const SETTINGS_NAV: { section: string; items: { id: SettingsSection; label: string }[] }[] = [
+  {
+    section: "Account",
+    items: [
+      { id: "account", label: "Account" },
+      { id: "notifications", label: "Notifications" },
+      { id: "billing", label: "Billing" },
+      { id: "usage", label: "Usage & Credits" },
+      { id: "privacy", label: "Privacy" },
+      { id: "theme", label: "Theme" },
+    ],
+  },
+  {
+    section: "Productivity",
+    items: [
+      { id: "coach", label: "Coach" },
+      { id: "focus", label: "Focus" },
+      { id: "blocker", label: "Distraction Blocker" },
+    ],
+  },
+  {
+    section: "Tracking",
+    items: [
+      { id: "activity", label: "Activity" },
+      { id: "breaks", label: "Breaks" },
+      { id: "meetings", label: "Meetings" },
+      { id: "time_entries", label: "Time Entries" },
+    ],
+  },
+  {
+    section: "Automation",
+    items: [
+      { id: "labels", label: "Labels" },
+      { id: "rules", label: "App & Website Rules" },
+      { id: "agent", label: "Agent" },
+    ],
+  },
+  {
+    section: "Workspace",
+    items: [
+      { id: "ws_settings", label: "Settings" },
+      { id: "members", label: "Members" },
+      { id: "planning", label: "Planning" },
+      { id: "teams", label: "Teams" },
+    ],
+  },
+  {
+    section: "Connections & Data",
+    items: [
+      { id: "calendars", label: "Calendars" },
+      { id: "integrations", label: "Integrations" },
+      { id: "api", label: "API" },
+      { id: "export", label: "Data Export" },
+      { id: "mcp", label: "MCP" },
+    ],
+  },
+];
+
+function SettingsShell({
+  title,
+  blurb,
+  rows,
+}: {
+  title: string;
+  blurb: string;
+  rows?: { label: string; value: string; hint?: string }[];
+}) {
+  return (
+    <div className="settings-shell-card">
+      <h2>{title}</h2>
+      <p className="muted">{blurb}</p>
+      <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+        UI shell — not connected to cloud accounts. AutoTrace stays local-first.
+      </p>
+      <div style={{ marginTop: 18 }}>
+        {(rows ?? [
+          { label: "Status", value: "Coming soon", hint: "Placeholder for Rory-parity layout" },
+        ]).map((r) => (
+          <div key={r.label} className="settings-shell-row">
+            <div>
+              <div>{r.label}</div>
+              {r.hint && <div className="muted">{r.hint}</div>}
+            </div>
+            <button type="button" className="btn" disabled>
+              {r.value}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function SettingsView({
   status,
   onPause,
@@ -229,6 +349,7 @@ export function SettingsView({
   onRefreshStatus,
   onError,
 }: Props) {
+  const [section, setSection] = useState<SettingsSection>("privacy");
   const [settings, setSettings] = useState<TrackerSettings | null>(
     status?.settings ?? null,
   );
@@ -283,22 +404,221 @@ export function SettingsView({
   }
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <h2>Settings & privacy</h2>
-        {status && (
-          <button
-            type="button"
-            className="btn"
-            onClick={status.tracker.status === "running" ? onPause : onResume}
-          >
-            {status.tracker.status === "running"
-              ? "Pause tracking"
-              : "Resume tracking"}
-          </button>
-        )}
-      </div>
+    <div className="settings-hub">
+      <aside className="settings-nav">
+        <button type="button" className="settings-nav-back" disabled title="Use sidebar Settings">
+          ← Back
+        </button>
+        {SETTINGS_NAV.map((group) => (
+          <div key={group.section}>
+            <div className="settings-nav-sec">{group.section}</div>
+            {group.items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`item${section === item.id ? " active" : ""}`}
+                onClick={() => setSection(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        ))}
+      </aside>
 
+      <div className="settings-pane">
+        {section === "account" && (
+          <SettingsShell
+            title="Account"
+            blurb="Profile and sign-in options. AutoTrace has no cloud account — this layout matches Rory for familiarity."
+            rows={[
+              { label: "Display name", value: "Local user", hint: "Stored on this device only" },
+              { label: "Email", value: "Not set", hint: "No cloud login" },
+              { label: "Password", value: "N/A" },
+            ]}
+          />
+        )}
+        {section === "notifications" && (
+          <SettingsShell
+            title="Notifications"
+            blurb="Desktop and in-app alerts."
+            rows={[
+              { label: "Break reminders", value: "See Breaks", hint: "Configured under Tracking → Breaks" },
+              { label: "Session alerts", value: "Off" },
+              { label: "Email digests", value: "Off", hint: "Cloud-only in Rory; unused here" },
+            ]}
+          />
+        )}
+        {section === "billing" && (
+          <SettingsShell
+            title="Billing"
+            blurb="Subscription and invoices. AutoTrace is local software — no SaaS billing."
+            rows={[
+              { label: "Plan", value: "Local", hint: "No subscription required" },
+              { label: "Payment method", value: "—" },
+              { label: "Invoices", value: "—" },
+            ]}
+          />
+        )}
+        {section === "usage" && (
+          <SettingsShell
+            title="Usage & Credits"
+            blurb="AI usage budgets live with your local providers (Agent settings)."
+            rows={[
+              { label: "AI credits", value: "Local budgets", hint: "Open Agent → Providers in the app" },
+              { label: "API calls today", value: "See AI usage" },
+            ]}
+          />
+        )}
+        {section === "theme" && (
+          <SettingsShell
+            title="Theme"
+            blurb="Appearance preferences."
+            rows={[
+              { label: "Color mode", value: "Dark", hint: "Dark is the default AutoTrace theme" },
+              { label: "Accent", value: "Lavender" },
+            ]}
+          />
+        )}
+        {section === "coach" && (
+          <SettingsShell
+            title="Coach"
+            blurb="Productivity coaching tips (shell)."
+            rows={[{ label: "Daily coach", value: "Off" }]}
+          />
+        )}
+        {section === "focus" && (
+          <SettingsShell
+            title="Focus"
+            blurb="Focus sessions live in the Timer / Focus views. This page mirrors Rory’s settings slot."
+            rows={[
+              { label: "Default focus length", value: "25 min", hint: "Use Focus from the sidebar" },
+              { label: "Auto-start breaks", value: "Off" },
+            ]}
+          />
+        )}
+        {section === "labels" && (
+          <SettingsShell
+            title="Labels"
+            blurb="Label prompts for tagging (shell). Use Projects / Clients for real labels today."
+          />
+        )}
+        {section === "rules" && (
+          <SettingsShell
+            title="App & Website Rules"
+            blurb="Mapping rules live under Rules in the main sidebar. Distraction block rules are under Distraction Blocker."
+            rows={[{ label: "Open Rules", value: "Sidebar → Rules" }]}
+          />
+        )}
+        {section === "agent" && (
+          <SettingsShell
+            title="Agent"
+            blurb="Customize how the AutoTrace agent works. Use Home → Agent for Chat History, MCP, and Prompts."
+            rows={[
+              { label: "Prompts & skills", value: "Agent → Prompts" },
+              { label: "Providers & limits", value: "Local AI settings" },
+              { label: "Feature flag", value: "AI on/off in Agent top bar" },
+            ]}
+          />
+        )}
+        {section === "ws_settings" && (
+          <SettingsShell
+            title="Workspace"
+            blurb="Single local workspace on this machine."
+            rows={[{ label: "Workspace name", value: "AutoTrace", hint: status?.db_path ?? "" }]}
+          />
+        )}
+        {section === "members" && (
+          <SettingsShell title="Members" blurb="Team members (shell). Local-only installs have one user." />
+        )}
+        {section === "planning" && (
+          <SettingsShell title="Planning" blurb="Planning preferences (shell)." />
+        )}
+        {section === "teams" && (
+          <SettingsShell
+            title="Teams"
+            blurb="Teams live under Teams in the main sidebar when you use multi-person workspaces."
+          />
+        )}
+        {section === "integrations" && (
+          <SettingsShell
+            title="Integrations"
+            blurb="Open Integrations in the main sidebar for real connectors."
+            rows={[{ label: "Manage", value: "Sidebar → Integrations" }]}
+          />
+        )}
+        {section === "api" && (
+          <SettingsShell
+            title="API"
+            blurb="Local HTTP API for MCP and scripts. Enable under Integrations / Phase 4 extras below when on Privacy."
+            rows={[
+              { label: "Endpoint", value: "127.0.0.1:17890" },
+              { label: "Auth", value: "Bearer token" },
+            ]}
+          />
+        )}
+        {section === "export" && (
+          <SettingsShell
+            title="Data Export"
+            blurb="Export reports from Reports, or use PDF / CSV tools in the app."
+            rows={[{ label: "Reports", value: "Sidebar → Reports" }]}
+          />
+        )}
+        {section === "mcp" && (
+          <SettingsShell
+            title="MCP"
+            blurb="Model Context Protocol — connect Claude, ChatGPT, or Cursor to local AutoTrace."
+            rows={[
+              { label: "URL", value: "http://127.0.0.1:17890/v1/mcp" },
+              { label: "Setup", value: "Agent → MCP", hint: "Open the Agent view for the connect panel" },
+            ]}
+          />
+        )}
+        {section === "meetings" && (
+          <SettingsShell
+            title="Meetings"
+            blurb="Meeting detection preferences (shell). Calendar events import under Calendars."
+          />
+        )}
+
+        {(section === "privacy" ||
+          section === "activity" ||
+          section === "time_entries" ||
+          section === "calendars" ||
+          section === "breaks" ||
+          section === "blocker") && (
+          <div className="page" style={{ padding: 0 }}>
+            <div className="page-head">
+              <h2>
+                {section === "privacy"
+                  ? "Privacy"
+                  : section === "activity"
+                    ? "Activity"
+                    : section === "time_entries"
+                      ? "Time Entries"
+                      : section === "calendars"
+                        ? "Calendars"
+                        : section === "breaks"
+                          ? "Breaks"
+                          : "Distraction Blocker"}
+              </h2>
+              {status && (section === "privacy" || section === "activity") && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={status.tracker.status === "running" ? onPause : onResume}
+                >
+                  {status.tracker.status === "running"
+                    ? "Pause tracking"
+                    : "Resume tracking"}
+                </button>
+              )}
+            </div>
+
+            {(section === "privacy" ||
+              section === "activity" ||
+              section === "time_entries") && (
+              <>
       <div className="card" style={{ marginBottom: 12 }}>
         <p className="kicker">Privacy — what we track</p>
         <ul className="muted" style={{ margin: "8px 0 0", paddingLeft: 18 }}>
@@ -550,7 +870,25 @@ export function SettingsView({
         </p>
       </div>
 
-      <Phase4Extras onError={onError} />
+      {section === "privacy" && <Phase4Extras onError={onError} />}
+              </>
+            )}
+
+            {section === "calendars" && (
+              <CalendarImportCard day={todayLocal()} onError={onError} />
+            )}
+
+            {section === "breaks" && (
+              <div className="card">
+                <p className="kicker">Break reminders</p>
+                <BreakReminders onError={onError} />
+              </div>
+            )}
+
+            {section === "blocker" && <Phase4Extras onError={onError} />}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

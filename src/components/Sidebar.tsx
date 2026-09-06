@@ -14,6 +14,7 @@ type NavId =
   | "profit"
   | "teams"
   | "integrations"
+  | "ai"
   | "settings";
 
 type Props = {
@@ -29,6 +30,17 @@ const NAV: {
   section?: string;
   icon: ReactNode;
 }[] = [
+  {
+    id: "ai",
+    label: "Agent",
+    section: "Home",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2" />
+      </svg>
+    ),
+  },
   {
     id: "calendar",
     label: "Calendar",
@@ -158,6 +170,7 @@ const NAV: {
   {
     id: "settings",
     label: "Settings",
+    section: "Admin",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
         <circle cx="12" cy="12" r="3" />

@@ -502,6 +502,162 @@ export const api = {
     invoke<DistractionReport>("distraction_report", { day }),
   openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
   macosAccessibilityHint: () => invoke<string>("macos_accessibility_hint"),
+
+  listAiProviders: () => invoke<AiProvider[]>("list_ai_providers"),
+  upsertAiProvider: (payload: {
+    id?: number | null;
+    kind: string;
+    label: string;
+    baseUrl?: string | null;
+    apiKey?: string | null;
+    enabled: boolean;
+    isDefault: boolean;
+    allowedModels: string[];
+    maxTokensPerRequest: number;
+    temperatureCap: number;
+  }) =>
+    invoke<AiProvider>("upsert_ai_provider", {
+      id: payload.id ?? null,
+      kind: payload.kind,
+      label: payload.label,
+      baseUrl: payload.baseUrl ?? null,
+      apiKey: payload.apiKey ?? null,
+      enabled: payload.enabled,
+      isDefault: payload.isDefault,
+      allowedModels: payload.allowedModels,
+      maxTokensPerRequest: payload.maxTokensPerRequest,
+      temperatureCap: payload.temperatureCap,
+    }),
+  deleteAiProvider: (id: number) => invoke<void>("delete_ai_provider", { id }),
+  testAiProvider: (providerId: number) =>
+    invoke<AiRunResult>("test_ai_provider", { providerId }),
+  listAiBudgets: () => invoke<AiBudget[]>("list_ai_budgets"),
+  setAiBudget: (payload: {
+    period: string;
+    tokenLimit: number;
+    requestLimit: number;
+    costUsdLimit?: number | null;
+    warnAtPct: number;
+  }) =>
+    invoke<AiBudget>("set_ai_budget", {
+      period: payload.period,
+      tokenLimit: payload.tokenLimit,
+      requestLimit: payload.requestLimit,
+      costUsdLimit: payload.costUsdLimit ?? null,
+      warnAtPct: payload.warnAtPct,
+    }),
+  getAiUsageSummary: () => invoke<AiUsageSummary>("get_ai_usage_summary"),
+  listAiTemplates: () => invoke<AiTemplate[]>("list_ai_templates"),
+  listAiChats: () => invoke<AiChat[]>("list_ai_chats"),
+  createAiChat: (title: string) => invoke<AiChat>("create_ai_chat", { title }),
+  listAiMessages: (chatId: number) =>
+    invoke<AiMessage[]>("list_ai_messages", { chatId }),
+  runAiAgent: (payload: {
+    agent: string;
+    prompt: string;
+    system?: string | null;
+    model?: string | null;
+    chatId?: number | null;
+    templateSlug?: string | null;
+    variables?: Record<string, unknown> | null;
+    day?: string | null;
+  }) =>
+    invoke<AiRunResult>("run_ai_agent", {
+      agent: payload.agent,
+      prompt: payload.prompt,
+      system: payload.system ?? null,
+      model: payload.model ?? null,
+      chatId: payload.chatId ?? null,
+      templateSlug: payload.templateSlug ?? null,
+      variables: payload.variables ?? null,
+      day: payload.day ?? null,
+    }),
+  aiSidecarStatus: () =>
+    invoke<{ url: string; healthy: boolean; ai_enabled: boolean }>(
+      "ai_sidecar_status",
+    ),
+};
+
+export type AiProvider = {
+  id: number;
+  kind: string;
+  label: string;
+  base_url: string | null;
+  has_api_key: boolean;
+  enabled: boolean;
+  is_default: boolean;
+  allowed_models: string[];
+  max_tokens_per_request: number;
+  temperature_cap: number;
+};
+
+export type AiBudget = {
+  id: number;
+  period: string;
+  token_limit: number;
+  request_limit: number;
+  cost_usd_limit: number | null;
+  warn_at_pct: number;
+};
+
+export type AiUsageSummary = {
+  day_tokens: number;
+  day_requests: number;
+  month_tokens: number;
+  month_requests: number;
+  day_budget: AiBudget | null;
+  month_budget: AiBudget | null;
+  warn: boolean;
+  blocked: boolean;
+  recent: {
+    id: number;
+    provider_id: number | null;
+    model: string;
+    agent: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    estimated_cost_usd: number | null;
+    status: string;
+    created_at: string;
+  }[];
+};
+
+export type AiTemplate = {
+  id: number;
+  slug: string;
+  title: string;
+  description: string | null;
+  agent: string;
+  system_prompt: string;
+  user_prompt_template: string;
+  output_schema_json: string | null;
+  version: number;
+};
+
+export type AiChat = {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AiMessage = {
+  id: number;
+  chat_id: number;
+  role: string;
+  content: string;
+  created_at: string;
+};
+
+export type AiRunResult = {
+  text: string;
+  model: string;
+  agent: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  warning: string | null;
 };
 
 export type ProfitabilityReport = {

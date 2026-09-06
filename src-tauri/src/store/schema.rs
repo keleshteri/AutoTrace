@@ -278,7 +278,152 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('break_length_mins', '5');
 UPDATE settings SET value = '8' WHERE key = 'schema_version';
 "#;
 
-pub const SCHEMA_VERSION: i64 = 8;
+const MIGRATION_V9: &str = r#"
+CREATE TABLE IF NOT EXISTS ai_providers (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind            TEXT NOT NULL,
+    label           TEXT NOT NULL,
+    base_url        TEXT,
+    api_key_enc     TEXT,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    is_default      INTEGER NOT NULL DEFAULT 0,
+    allowed_models  TEXT NOT NULL DEFAULT '[]',
+    max_tokens_per_request INTEGER NOT NULL DEFAULT 4096,
+    temperature_cap REAL NOT NULL DEFAULT 1.0,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS ai_budgets (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    period          TEXT NOT NULL UNIQUE,
+    token_limit     INTEGER NOT NULL DEFAULT 200000,
+    request_limit   INTEGER NOT NULL DEFAULT 200,
+    cost_usd_limit  REAL,
+    warn_at_pct     REAL NOT NULL DEFAULT 80.0,
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id         INTEGER REFERENCES ai_providers(id) ON DELETE SET NULL,
+    model               TEXT NOT NULL,
+    agent               TEXT NOT NULL,
+    prompt_tokens       INTEGER NOT NULL DEFAULT 0,
+    completion_tokens   INTEGER NOT NULL DEFAULT 0,
+    total_tokens        INTEGER NOT NULL DEFAULT 0,
+    estimated_cost_usd  REAL,
+    request_id          TEXT,
+    status              TEXT NOT NULL DEFAULT 'ok',
+    detail              TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at);
+
+CREATE TABLE IF NOT EXISTS ai_templates (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug                 TEXT NOT NULL UNIQUE,
+    title                TEXT NOT NULL,
+    description          TEXT,
+    agent                TEXT NOT NULL DEFAULT 'template',
+    system_prompt        TEXT NOT NULL,
+    user_prompt_template TEXT NOT NULL,
+    output_schema_json   TEXT,
+    version              INTEGER NOT NULL DEFAULT 1,
+    created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS ai_chats (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT NOT NULL DEFAULT 'Chat',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id    INTEGER NOT NULL REFERENCES ai_chats(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO settings (key, value) VALUES ('ai_enabled', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('ai_send_titles', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('ai_send_urls', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('ai_sidecar_url', 'http://127.0.0.1:17991');
+
+INSERT OR IGNORE INTO ai_budgets (period, token_limit, request_limit, warn_at_pct)
+VALUES ('day', 100000, 100, 80.0);
+INSERT OR IGNORE INTO ai_budgets (period, token_limit, request_limit, warn_at_pct)
+VALUES ('month', 2000000, 2000, 80.0);
+
+INSERT OR IGNORE INTO ai_templates (slug, title, description, agent, system_prompt, user_prompt_template, output_schema_json)
+VALUES (
+  'daily_work_report',
+  'Daily work report',
+  'Client/company daily summary from approved tagged time',
+  'template',
+  'You are AutoTrace report writer. Use only the provided time data. Do not invent clients or hours. Be concise and professional.',
+  'Write a daily work report for {{day}}.
+Client filter: {{client_name}}
+Billable hours: {{billable_hours}}
+Data JSON:
+{{data_json}}
+
+Return markdown with: Summary, Breakdown by project, Notable gaps.',
+  '{"type":"object","properties":{"markdown":{"type":"string"}}}'
+);
+
+INSERT OR IGNORE INTO ai_templates (slug, title, description, agent, system_prompt, user_prompt_template, output_schema_json)
+VALUES (
+  'weekly_focus_digest',
+  'Weekly focus digest',
+  'Narrative on top of focus scores for the week',
+  'template',
+  'You summarize focus and wellness from local AutoTrace digests. Stay factual.',
+  'Week starting {{day}}. Focus digest JSON:
+{{data_json}}
+
+Write a short weekly narrative: wins, risks, and 3 concrete habits.',
+  '{"type":"object","properties":{"markdown":{"type":"string"}}}'
+);
+
+INSERT OR IGNORE INTO ai_templates (slug, title, description, agent, system_prompt, user_prompt_template, output_schema_json)
+VALUES (
+  'untagged_cleanup',
+  'Untagged cleanup',
+  'Suggest keyword rules from recent untagged blocks',
+  'template',
+  'You suggest AutoTrace tagging rules. Patterns must be short substrings. Never invent clients not in the hierarchy.',
+  'Day {{day}}. Untagged / low-confidence sessions and hierarchy:
+{{data_json}}
+
+Suggest up to 8 rules as a markdown table: pattern | match_field | client | project | reason.',
+  '{"type":"object","properties":{"markdown":{"type":"string"}}}'
+);
+
+INSERT OR IGNORE INTO ai_templates (slug, title, description, agent, system_prompt, user_prompt_template, output_schema_json)
+VALUES (
+  'client_status_email',
+  'Client status email',
+  'Short status blurb from billable sessions',
+  'template',
+  'Write a polite client-facing status email. No internal app names or raw window titles.',
+  'Client: {{client_name}}
+Range ending {{day}}
+Data:
+{{data_json}}
+
+Write Subject + Body (markdown).',
+  '{"type":"object","properties":{"markdown":{"type":"string"}}}'
+);
+
+UPDATE settings SET value = '9' WHERE key = 'schema_version';
+"#;
+
+pub const SCHEMA_VERSION: i64 = 9;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i64 = conn
@@ -340,6 +485,14 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 8 {
         let _ = conn.execute_batch(MIGRATION_V8);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '8')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+    }
+    if current < 9 {
+        let _ = conn.execute_batch(MIGRATION_V9);
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

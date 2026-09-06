@@ -8,6 +8,7 @@
 | 3 — Integrations | Weeks 15-22 | ClickUp (token + OAuth), webhooks, local export API, MCP JSON-RPC | Users who want it can push approved entries out | **Done (100%)** |
 | Rize Waves T/A/R | — | Timer (pause/resume), Activity, Calendar live Tracking, categories, review tabs, keyboard | Personal product parity complete | **Done (100%)** |
 | 4 — Teams + extras | — | Workspaces sync push/pull, profitability, real PDF, MCP, OAuth calendars, vault at-rest encryption, blocker soft/hard, ambient tracks, distraction score, privacy audit | Opt-in local-first expansion | **Done (100%)** |
+| AI — Local agents | — | LangGraph.js sidecar, providers (API/Ollama/LM Studio), budgets, chat/analyst/templates | Opt-in AI with hard usage limits | **Done (v1)** |
 | Ship — multi-OS installers | — | GitHub Actions Release (Win/Linux/macOS) + local `scripts/release-local.sh` | Downloadable assets on GitHub Releases | Ready (tag `v*`) |
 
 MVP (Phase 1) is a shippable, complete personal product on its own. Integrations and team features never block it and are never required to use the app.

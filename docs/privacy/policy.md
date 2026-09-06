@@ -20,6 +20,15 @@ Rules every integration must follow:
 4. **Untagged stays local.** Personal or unassigned activity never syncs to an integration, even after one is enabled — only entries explicitly tagged to a client/project (and approved, if using confirm mode) are eligible.
 5. **Prefer approved summaries over raw data.** Where the integration allows it, push the user-approved time entry (client, project, duration) rather than the raw window title/URL.
 
+## Local AI agents (opt-in)
+
+- Disabled until the user enables **AI agents** in the app.
+- API keys are encrypted at rest on the device and only sent to the provider the user configured (OpenAI, Anthropic, OpenRouter, Ollama, LM Studio, or custom URL).
+- ChatGPT Plus / Claude Pro **chat subscriptions are not supported** — API keys or local models only.
+- Window titles/URLs are omitted from AI context unless the user turns on explicit flags.
+- Token/request **budgets** can block further calls when limits are hit.
+- Each AI call is recorded in the local privacy audit (“what left this machine”) and usage ledger.
+
 ## Cloud sync / team features
 
 Not part of MVP. If built later:

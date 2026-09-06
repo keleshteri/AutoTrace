@@ -10,6 +10,7 @@ import { ReportsView } from "./components/ReportsView";
 import { ProfitView, TeamsView } from "./components/ProfitView";
 import { FocusView } from "./components/FocusView";
 import { IntegrationsView } from "./components/IntegrationsView";
+import { AiView } from "./components/AiView";
 import { TimerView } from "./components/TimerView";
 import { ActivityView } from "./components/ActivityView";
 import { StatusBar } from "./components/StatusBar";
@@ -346,6 +347,7 @@ function App() {
           {nav === "profit" && <ProfitView onError={setError} />}
           {nav === "teams" && <TeamsView onError={setError} />}
           {nav === "integrations" && <IntegrationsView onError={setError} />}
+          {nav === "ai" && <AiView onError={setError} />}
 
           {nav === "settings" && (
             <SettingsView

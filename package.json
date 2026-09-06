@@ -11,7 +11,9 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "release:local": "bash scripts/release-local.sh"
+    "release:local": "bash scripts/release-local.sh",
+    "ai:sidecar": "npm --prefix ai-sidecar start",
+    "ai:sidecar:install": "npm --prefix ai-sidecar install"
   },
   "dependencies": {
     "react": "^19.1.0",

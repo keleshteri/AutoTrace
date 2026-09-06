@@ -34,3 +34,11 @@ See [prd/mvp.md](../prd/mvp.md) for the MVP checklist. Phases 1–4 product scop
 - [ ] Tag `v0.1.0` and publish GitHub Release installers
 - [ ] Windows full-day smoke + resource budget numbers on release build
 - [ ] Optional code signing / notarization secrets
+
+## Phase AI — local agents (v1 done)
+
+- [x] Provider setup (OpenAI / Anthropic / OpenRouter / Ollama / LM Studio / custom)
+- [x] Token/request budgets + usage ledger + privacy audit
+- [x] Chat + tracking analyst + template runner
+- [x] LangGraph.js sidecar (`ai-sidecar/`) with in-process fallback
+- [ ] Bundled Node sidecar binary in installers (Phase AI-2)
