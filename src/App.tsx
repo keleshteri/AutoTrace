@@ -14,6 +14,8 @@ import { AiView } from "./components/AiView";
 import { TimerView } from "./components/TimerView";
 import { ActivityView } from "./components/ActivityView";
 import { StatusBar } from "./components/StatusBar";
+import { BreakBanner, BreakCoach } from "./components/BreakCoach";
+import { WorkspaceSettingsView } from "./components/WorkspaceSettingsView";
 import {
   api,
   AppStatus,
@@ -21,6 +23,7 @@ import {
   FocusSession,
   Hierarchy,
   SessionRow,
+  Workspace,
   todayLocal,
 } from "./lib/api";
 import "./App.css";
@@ -38,6 +41,16 @@ function App() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [showManual, setShowManual] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+
+  const [breakCoachOpen, setBreakCoachOpen] = useState(false);
+  const [breakEvery, setBreakEvery] = useState(45);
+  const [breakLen, setBreakLen] = useState(5);
+  const [breakSnooze, setBreakSnooze] = useState(5);
+  const [snoozeUntil, setSnoozeUntil] = useState(0);
+  const [breakUntil, setBreakUntil] = useState(0);
+  const [breakTick, setBreakTick] = useState(0);
+  const [lastCoachBucket, setLastCoachBucket] = useState(-1);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -48,6 +61,14 @@ function App() {
       setStatus(s);
       setFocus(f);
       setFocusTick(0);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const refreshWorkspaces = useCallback(async () => {
+    try {
+      setWorkspaces(await api.listWorkspaces());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -76,9 +97,10 @@ function App() {
 
   useEffect(() => {
     void refreshStatus();
+    void refreshWorkspaces();
     const id = window.setInterval(() => void refreshStatus(), 2000);
     return () => window.clearInterval(id);
-  }, [refreshStatus]);
+  }, [refreshStatus, refreshWorkspaces]);
 
   useEffect(() => {
     void refreshDay();
@@ -92,8 +114,14 @@ function App() {
     return () => window.clearInterval(id);
   }, [focus?.id, focus?.status]);
 
-  // focusTick forces a re-render each second while active.
+  useEffect(() => {
+    if (breakUntil <= Date.now()) return;
+    const id = window.setInterval(() => setBreakTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [breakUntil]);
+
   void focusTick;
+  void breakTick;
   const liveFocus = focus
     ? {
         ...focus,
@@ -104,29 +132,56 @@ function App() {
       }
     : null;
 
+  const onBreak = breakUntil > Date.now();
+  const breakRemaining = onBreak
+    ? Math.max(0, Math.floor((breakUntil - Date.now()) / 1000))
+    : 0;
+
+  useEffect(() => {
+    if (!onBreak) return;
+    if (breakRemaining <= 0) {
+      setBreakUntil(0);
+      setBreakReminder(null);
+    }
+  }, [onBreak, breakRemaining]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const on = (await api.getFeatureFlag("break_reminders")) === "1";
-        if (!on || cancelled) {
-          setBreakReminder(null);
+        const every = Number((await api.getFeatureFlag("break_every_mins")) || "45");
+        const len = Number((await api.getFeatureFlag("break_length_mins")) || "5");
+        const snooze = Number((await api.getFeatureFlag("break_snooze_mins")) || "5");
+        if (cancelled) return;
+        setBreakEvery(every);
+        setBreakLen(len);
+        setBreakSnooze(snooze);
+
+        if (!on || onBreak || Date.now() < snoozeUntil) {
+          if (!onBreak) setBreakReminder(null);
+          if (!on || onBreak || Date.now() < snoozeUntil) setBreakCoachOpen(false);
           return;
         }
-        const every = Number((await api.getFeatureFlag("break_every_mins")) || "50");
-        const len = Number((await api.getFeatureFlag("break_length_mins")) || "5");
+
         const elapsed = liveFocus?.elapsed_secs ?? 0;
         if (
           liveFocus &&
           (liveFocus.status === "active" || liveFocus.status === "paused")
         ) {
           const mins = Math.floor(elapsed / 60);
-          if (mins > 0 && every > 0 && mins % every === 0) {
+          if (mins > 0 && every > 0 && mins >= every) {
+            const bucket = Math.floor(mins / every);
             setBreakReminder(`Break time — take ${len} min`);
+            if (bucket !== lastCoachBucket) {
+              setLastCoachBucket(bucket);
+              setBreakCoachOpen(true);
+            }
             return;
           }
         }
         setBreakReminder(null);
+        setBreakCoachOpen(false);
       } catch {
         /* ignore */
       }
@@ -134,7 +189,40 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [liveFocus?.elapsed_secs, liveFocus?.status, liveFocus?.id]);
+  }, [
+    liveFocus?.elapsed_secs,
+    liveFocus?.status,
+    liveFocus?.id,
+    onBreak,
+    snoozeUntil,
+    lastCoachBucket,
+  ]);
+
+  async function startBreak() {
+    setBreakCoachOpen(false);
+    setBreakUntil(Date.now() + breakLen * 60_000);
+    setBreakReminder(`On break (${breakLen} min)`);
+    try {
+      if (focus?.status === "active") {
+        await api.pauseFocus();
+        await refreshStatus();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function snoozeBreak() {
+    setBreakCoachOpen(false);
+    setSnoozeUntil(Date.now() + breakSnooze * 60_000);
+    setBreakReminder(null);
+  }
+
+  function endBreak() {
+    setBreakUntil(0);
+    setBreakReminder(null);
+    setSnoozeUntil(Date.now() + 60_000);
+  }
 
   function selectSession(session: SessionRow, additive: boolean) {
     setSelectedIds((prev) => {
@@ -232,6 +320,7 @@ function App() {
   }, [nav, selectedIds, selected]);
 
   const showSummary = nav === "calendar";
+  const activeWorkspace = workspaces.find((w) => w.is_active) ?? workspaces[0];
 
   return (
     <div className="app-shell">
@@ -241,9 +330,32 @@ function App() {
           onNavigate={setNav}
           trackerStatus={status?.tracker.status ?? "…"}
           currentApp={status?.tracker.current_app ?? null}
+          workspaces={workspaces}
+          onSwitchWorkspace={(id) =>
+            void api.setActiveWorkspace(id).then(refreshWorkspaces)
+          }
+          onCreateWorkspace={(name) =>
+            void api
+              .createWorkspace(name)
+              .then((w) => api.setActiveWorkspace(w.id))
+              .then(refreshWorkspaces)
+          }
         />
 
         <div className="main-col" style={{ position: "relative" }}>
+          {onBreak && (
+            <BreakBanner remainingSecs={breakRemaining} onEnd={endBreak} />
+          )}
+          <BreakCoach
+            visible={breakCoachOpen && !onBreak}
+            everyMins={breakEvery}
+            breakMins={breakLen}
+            snoozeMins={breakSnooze}
+            onStartBreak={() => void startBreak()}
+            onSnooze={snoozeBreak}
+            onDismiss={() => setBreakCoachOpen(false)}
+          />
+
           {nav === "timer" && (
             <TimerView
               focus={liveFocus}
@@ -349,6 +461,39 @@ function App() {
           {nav === "integrations" && <IntegrationsView onError={setError} />}
           {nav === "ai" && <AiView onError={setError} />}
 
+          {nav === "workspace" && (
+            <WorkspaceSettingsView
+              workspaceId={activeWorkspace?.id}
+              onError={setError}
+              onWorkspacesChanged={() => void refreshWorkspaces()}
+            />
+          )}
+
+          {(nav === "ws_overview" || nav === "ws_dashboards") && (
+            <div className="page">
+              <div className="page-head">
+                <h2>
+                  {nav === "ws_overview" ? "Workspace Overview" : "Dashboards"}
+                </h2>
+              </div>
+              <div className="card">
+                <p className="muted">
+                  Phase 1 shell for <b>{activeWorkspace?.name ?? "workspace"}</b>.
+                  Open Workspace Settings to rename, toggle features, and configure
+                  invoicing. App-wide privacy and tracking stay under Admin → Settings.
+                </p>
+                <button
+                  type="button"
+                  className="primary"
+                  style={{ marginTop: 12 }}
+                  onClick={() => setNav("workspace")}
+                >
+                  Workspace Settings
+                </button>
+              </div>
+            </div>
+          )}
+
           {nav === "settings" && (
             <SettingsView
               status={status}
@@ -356,6 +501,7 @@ function App() {
               onResume={() => void api.resumeTracking().then(refreshStatus)}
               onRefreshStatus={() => void refreshStatus()}
               onError={setError}
+              onOpenWorkspaceSettings={() => setNav("workspace")}
             />
           )}
         </div>
@@ -373,8 +519,11 @@ function App() {
         trackerStatus={status?.tracker.status ?? "…"}
         currentApp={status?.tracker.current_app ?? null}
         distractionBlocked={status?.tracker.distraction_blocked ?? null}
-        breakReminder={breakReminder}
+        breakReminder={onBreak ? `Break · ${breakRemaining}s` : breakReminder}
         focus={liveFocus}
+        onBreak={onBreak}
+        breakRemainingSecs={breakRemaining}
+        onEndBreak={endBreak}
         onToggleTracking={() => {
           if (status?.tracker.status === "running") {
             void api.pauseTracking().then(refreshStatus);
@@ -387,6 +536,7 @@ function App() {
             .startFocus()
             .then(() => {
               setFocusTick(0);
+              setLastCoachBucket(-1);
               setNav("timer");
               return refreshStatus();
             })

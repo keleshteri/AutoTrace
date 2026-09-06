@@ -423,7 +423,20 @@ Write Subject + Body (markdown).',
 UPDATE settings SET value = '9' WHERE key = 'schema_version';
 "#;
 
-pub const SCHEMA_VERSION: i64 = 9;
+const MIGRATION_V10: &str = r#"
+ALTER TABLE workspaces ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE workspaces ADD COLUMN icon TEXT NOT NULL DEFAULT 'briefcase';
+
+UPDATE settings SET value = '1' WHERE key = 'break_reminders';
+UPDATE settings SET value = '45' WHERE key = 'break_every_mins';
+UPDATE settings SET value = '5' WHERE key = 'break_length_mins';
+INSERT OR IGNORE INTO settings (key, value) VALUES ('break_snooze_mins', '5');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('focus_default_mins', '50');
+
+UPDATE settings SET value = '10' WHERE key = 'schema_version';
+"#;
+
+pub const SCHEMA_VERSION: i64 = 10;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i64 = conn
@@ -493,6 +506,14 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 9 {
         let _ = conn.execute_batch(MIGRATION_V9);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '9')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+    }
+    if current < 10 {
+        let _ = conn.execute_batch(MIGRATION_V10);
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

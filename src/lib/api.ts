@@ -454,6 +454,8 @@ export const api = {
     invoke<number[]>("export_client_pdf", { clientId, fromDay, toDay }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   createWorkspace: (name: string) => invoke<Workspace>("create_workspace", { name }),
+  updateWorkspace: (id: number, name: string, icon: string, settingsJson: string) =>
+    invoke<Workspace>("update_workspace", { id, name, icon, settingsJson }),
   setActiveWorkspace: (id: number) => invoke<void>("set_active_workspace", { id }),
   setWorkspaceSync: (
     id: number,
@@ -692,7 +694,72 @@ export type Workspace = {
   role: string;
   sync_url: string | null;
   is_active: boolean;
+  icon?: string;
+  settings_json?: string;
 };
+
+export type WorkspaceFeatures = {
+  profitability: boolean;
+  invoicing: boolean;
+  billable_hours: boolean;
+  tasks: boolean;
+  projects: boolean;
+  clients: boolean;
+  client_tagging: boolean;
+  labels: boolean;
+  team_creation_admin_only: boolean;
+};
+
+export type WorkspaceInvoicing = {
+  company_name: string;
+  company_address: string;
+  payment_instructions: string;
+  default_payment_terms: string;
+};
+
+export type WorkspaceSettings = {
+  features: WorkspaceFeatures;
+  invoicing: WorkspaceInvoicing;
+  logo_data_url: string | null;
+};
+
+export function defaultWorkspaceSettings(): WorkspaceSettings {
+  return {
+    features: {
+      profitability: true,
+      invoicing: true,
+      billable_hours: true,
+      tasks: true,
+      projects: true,
+      clients: true,
+      client_tagging: true,
+      labels: true,
+      team_creation_admin_only: false,
+    },
+    invoicing: {
+      company_name: "",
+      company_address: "",
+      payment_instructions: "",
+      default_payment_terms: "Net 30",
+    },
+    logo_data_url: null,
+  };
+}
+
+export function parseWorkspaceSettings(json?: string | null): WorkspaceSettings {
+  const base = defaultWorkspaceSettings();
+  if (!json || json === "{}") return base;
+  try {
+    const v = JSON.parse(json) as Partial<WorkspaceSettings>;
+    return {
+      features: { ...base.features, ...(v.features ?? {}) },
+      invoicing: { ...base.invoicing, ...(v.invoicing ?? {}) },
+      logo_data_url: v.logo_data_url ?? null,
+    };
+  } catch {
+    return base;
+  }
+}
 
 export type BlockRule = {
   id: number;

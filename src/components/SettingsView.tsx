@@ -15,6 +15,7 @@ type Props = {
   onResume: () => void;
   onRefreshStatus: () => void;
   onError: (msg: string | null) => void;
+  onOpenWorkspaceSettings?: () => void;
 };
 
 const WEEKDAYS = [
@@ -348,6 +349,7 @@ export function SettingsView({
   onResume,
   onRefreshStatus,
   onError,
+  onOpenWorkspaceSettings,
 }: Props) {
   const [section, setSection] = useState<SettingsSection>("privacy");
   const [settings, setSettings] = useState<TrackerSettings | null>(
@@ -483,20 +485,17 @@ export function SettingsView({
         {section === "coach" && (
           <SettingsShell
             title="Coach"
-            blurb="Productivity coaching tips (shell)."
-            rows={[{ label: "Daily coach", value: "Off" }]}
-          />
-        )}
-        {section === "focus" && (
-          <SettingsShell
-            title="Focus"
-            blurb="Focus sessions live in the Timer / Focus views. This page mirrors Rory’s settings slot."
+            blurb="Productivity coach nudges during Focus (break reminders)."
             rows={[
-              { label: "Default focus length", value: "25 min", hint: "Use Focus from the sidebar" },
-              { label: "Auto-start breaks", value: "Off" },
+              {
+                label: "Break coach popup",
+                value: "With Breaks",
+                hint: "Configure under Tracking → Breaks",
+              },
             ]}
           />
         )}
+        {section === "focus" && <FocusSettingsPanel onError={onError} />}
         {section === "labels" && (
           <SettingsShell
             title="Labels"
@@ -522,11 +521,20 @@ export function SettingsView({
           />
         )}
         {section === "ws_settings" && (
-          <SettingsShell
-            title="Workspace"
-            blurb="Single local workspace on this machine."
-            rows={[{ label: "Workspace name", value: "AutoTrace", hint: status?.db_path ?? "" }]}
-          />
+          <div className="settings-shell-card">
+            <h2>Workspace Settings</h2>
+            <p className="muted">
+              Name, features, invoicing, and logo live on the workspace — not in app Settings.
+            </p>
+            <button
+              type="button"
+              className="primary"
+              style={{ marginTop: 16 }}
+              onClick={() => onOpenWorkspaceSettings?.()}
+            >
+              Open Workspace Settings
+            </button>
+          </div>
         )}
         {section === "members" && (
           <SettingsShell title="Members" blurb="Team members (shell). Local-only installs have one user." />
@@ -535,10 +543,21 @@ export function SettingsView({
           <SettingsShell title="Planning" blurb="Planning preferences (shell)." />
         )}
         {section === "teams" && (
-          <SettingsShell
-            title="Teams"
-            blurb="Teams live under Teams in the main sidebar when you use multi-person workspaces."
-          />
+          <div className="settings-shell-card">
+            <h2>Teams</h2>
+            <p className="muted">
+              Create and switch workspaces from the sidebar switcher or Your Teams. Sync packs stay
+              under Admin → Teams.
+            </p>
+            <button
+              type="button"
+              className="btn"
+              style={{ marginTop: 12 }}
+              onClick={() => onOpenWorkspaceSettings?.()}
+            >
+              Workspace Settings
+            </button>
+          </div>
         )}
         {section === "integrations" && (
           <SettingsShell
@@ -1053,6 +1072,65 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
         </div>
       </div>
     </>
+  );
+}
+
+function FocusSettingsPanel({ onError }: { onError: (m: string | null) => void }) {
+  const [defaultMins, setDefaultMins] = useState("50");
+  const [autoBreak, setAutoBreak] = useState(true);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setDefaultMins((await api.getFeatureFlag("focus_default_mins")) || "50");
+        setAutoBreak((await api.getFeatureFlag("break_reminders")) === "1");
+      } catch (e) {
+        onError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  }, [onError]);
+
+  return (
+    <div className="settings-shell-card">
+      <h2>Focus</h2>
+      <p className="muted">
+        Start Focus from the bottom status bar or Timer. Break coach pops up after sustained work.
+      </p>
+      <div className="settings-shell-row">
+        <div>
+          <div>Default focus length (min)</div>
+          <div className="muted">Soft target shown on the Timer ring</div>
+        </div>
+        <input
+          type="number"
+          min={10}
+          max={180}
+          style={{ width: 80 }}
+          value={defaultMins}
+          onChange={(e) => {
+            setDefaultMins(e.target.value);
+            void api.setFeatureFlag("focus_default_mins", e.target.value);
+          }}
+        />
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Break coach during Focus</div>
+          <div className="muted">Same as Tracking → Breaks reminders</div>
+        </div>
+        <button
+          type="button"
+          className={`ws-toggle${autoBreak ? " on" : ""}`}
+          onClick={() => {
+            const next = !autoBreak;
+            setAutoBreak(next);
+            void api.setFeatureFlag("break_reminders", next ? "1" : "0");
+          }}
+        >
+          {autoBreak ? "On" : "Off"}
+        </button>
+      </div>
+    </div>
   );
 }
 

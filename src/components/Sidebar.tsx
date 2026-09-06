@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
+import { FormEvent, useMemo, useState, type ReactNode } from "react";
 import { AutoTraceLogo } from "./AutoTraceLogo";
+import type { Workspace, WorkspaceFeatures } from "../lib/api";
+import { parseWorkspaceSettings } from "../lib/api";
 
 type NavId =
   | "calendar"
@@ -15,19 +17,26 @@ type NavId =
   | "teams"
   | "integrations"
   | "ai"
-  | "settings";
+  | "settings"
+  | "workspace"
+  | "ws_overview"
+  | "ws_dashboards";
 
 type Props = {
   active: NavId;
   onNavigate: (id: NavId) => void;
   trackerStatus: string;
   currentApp: string | null;
+  workspaces?: Workspace[];
+  onSwitchWorkspace?: (id: number) => void;
+  onCreateWorkspace?: (name: string) => void;
 };
 
 const NAV: {
   id: NavId;
   label: string;
   section?: string;
+  feature?: keyof WorkspaceFeatures;
   icon: ReactNode;
 }[] = [
   {
@@ -85,6 +94,7 @@ const NAV: {
     id: "projects",
     label: "Projects",
     section: "Work",
+    feature: "projects",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
         <path d="M4 7h16v12H4zM8 7V5h8v2" />
@@ -94,6 +104,7 @@ const NAV: {
   {
     id: "clients",
     label: "Clients",
+    feature: "clients",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
         <circle cx="9" cy="8" r="3" />
@@ -105,6 +116,7 @@ const NAV: {
   {
     id: "tasks",
     label: "Tasks",
+    feature: "tasks",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
         <path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" />
@@ -136,6 +148,7 @@ const NAV: {
   {
     id: "profit",
     label: "Profitability",
+    feature: "profitability",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
         <path d="M4 19h16M6 16l4-6 3 3 5-8" />
@@ -187,8 +200,34 @@ export function Sidebar({
   onNavigate,
   trackerStatus,
   currentApp,
+  workspaces = [],
+  onSwitchWorkspace,
+  onCreateWorkspace,
 }: Props) {
+  const [switchOpen, setSwitchOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [teamsOpen, setTeamsOpen] = useState(true);
+
+  const activeWs = workspaces.find((w) => w.is_active) ?? workspaces[0];
+  const features = useMemo(
+    () => parseWorkspaceSettings(activeWs?.settings_json).features,
+    [activeWs?.settings_json],
+  );
+  const logo = parseWorkspaceSettings(activeWs?.settings_json).logo_data_url;
+
   let lastSection = "";
+  const visibleNav = NAV.filter((item) => {
+    if (!item.feature) return true;
+    return features[item.feature];
+  });
+
+  function submitCreate(e: FormEvent) {
+    e.preventDefault();
+    if (!newName.trim() || !onCreateWorkspace) return;
+    onCreateWorkspace(newName.trim());
+    setNewName("");
+    setSwitchOpen(false);
+  }
 
   return (
     <aside className="sidebar">
@@ -199,12 +238,50 @@ export function Sidebar({
         </div>
       </div>
 
-      <button type="button" className="workspace-pill">
-        <span className="avatar">AT</span>
-        <span>Personal</span>
-      </button>
+      <div className="workspace-switcher">
+        <button
+          type="button"
+          className="workspace-pill"
+          onClick={() => setSwitchOpen((v) => !v)}
+        >
+          {logo ? (
+            <img src={logo} alt="" className="avatar-img" />
+          ) : (
+            <span className="avatar">{(activeWs?.name ?? "AT").slice(0, 2).toUpperCase()}</span>
+          )}
+          <span className="workspace-pill-name">{activeWs?.name ?? "Workspace"}</span>
+        </button>
+        {switchOpen && (
+          <div className="workspace-menu">
+            {workspaces.map((w) => (
+              <button
+                key={w.id}
+                type="button"
+                className={w.is_active ? "active" : undefined}
+                onClick={() => {
+                  onSwitchWorkspace?.(w.id);
+                  setSwitchOpen(false);
+                }}
+              >
+                {w.name}
+                {w.is_active ? " · active" : ""}
+              </button>
+            ))}
+            <form onSubmit={submitCreate} className="workspace-create">
+              <input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="New workspace name"
+              />
+              <button type="submit" className="btn">
+                Add
+              </button>
+            </form>
+          </div>
+        )}
+      </div>
 
-      {NAV.map((item) => {
+      {visibleNav.map((item) => {
         const showSection = item.section && item.section !== lastSection;
         if (item.section) lastSection = item.section;
         return (
@@ -222,13 +299,57 @@ export function Sidebar({
         );
       })}
 
+      <div className="nav-section" style={{ marginTop: 16 }}>
+        <button
+          type="button"
+          className="teams-toggle"
+          onClick={() => setTeamsOpen((v) => !v)}
+        >
+          Your Teams {teamsOpen ? "▾" : "▸"}
+        </button>
+      </div>
+      {teamsOpen && activeWs && (
+        <div className="your-teams">
+          <div className="your-teams-name">{activeWs.name}</div>
+          <button
+            type="button"
+            className={`nav-item nested${active === "ws_overview" ? " active" : ""}`}
+            onClick={() => onNavigate("ws_overview")}
+          >
+            Overview
+          </button>
+          <button
+            type="button"
+            className={`nav-item nested${active === "ws_dashboards" ? " active" : ""}`}
+            onClick={() => onNavigate("ws_dashboards")}
+          >
+            Dashboards
+          </button>
+          <button
+            type="button"
+            className={`nav-item nested${active === "workspace" ? " active" : ""}`}
+            onClick={() => onNavigate("workspace")}
+          >
+            Settings
+          </button>
+        </div>
+      )}
+      <button
+        type="button"
+        className="nav-item"
+        onClick={() => {
+          setSwitchOpen(true);
+          setNewName("");
+        }}
+      >
+        + Add Workspace
+      </button>
+
       <div className="sidebar-foot">
         <div className="tracker-chip">
           <div className="label">Live capture</div>
           <div className="value">{currentApp ?? "Waiting for activity"}</div>
-          <div
-            className={`status${trackerStatus === "running" ? "" : " paused"}`}
-          >
+          <div className={`status${trackerStatus === "running" ? "" : " paused"}`}>
             {trackerStatus}
           </div>
         </div>

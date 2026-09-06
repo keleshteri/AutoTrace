@@ -7,6 +7,9 @@ type Props = {
   distractionBlocked?: string | null;
   focus: FocusSession | null;
   breakReminder?: string | null;
+  onBreak?: boolean;
+  breakRemainingSecs?: number;
+  onEndBreak?: () => void;
   onToggleTracking: () => void;
   onStartFocus: () => void;
   onEndFocus: () => void;
@@ -77,6 +80,9 @@ export function StatusBar({
   distractionBlocked,
   focus,
   breakReminder,
+  onBreak,
+  breakRemainingSecs = 0,
+  onEndBreak,
   onToggleTracking,
   onStartFocus,
   onEndFocus,
@@ -117,7 +123,15 @@ export function StatusBar({
           ⏻
         </button>
         <div className="status-meta" onClick={onOpenTimer} role="presentation">
-          {focusing || pausedFocus ? (
+          {onBreak ? (
+            <>
+              <span className="focus-ring-mini break" />
+              <div>
+                <div className="status-time">{formatElapsed(breakRemainingSecs)}</div>
+                <div className="status-label">On break</div>
+              </div>
+            </>
+          ) : focusing || pausedFocus ? (
             <>
               <span className="focus-ring-mini" />
               <div>
@@ -143,7 +157,11 @@ export function StatusBar({
             </div>
           )}
         </div>
-        {focusing ? (
+        {onBreak ? (
+          <button type="button" className="end-focus-btn" onClick={onEndBreak}>
+            End Break
+          </button>
+        ) : focusing ? (
           <>
             {onPauseFocus && (
               <button type="button" className="end-focus-btn" onClick={onPauseFocus}>
@@ -173,11 +191,6 @@ export function StatusBar({
       </div>
 
       <div className="status-bar-right">
-        {breakReminder && !focusing && !pausedFocus && (
-          <span className="muted" style={{ marginRight: 8, fontSize: 12 }}>
-            {breakReminder}
-          </span>
-        )}
         <div className="ambient-player">
           <div className="ambient-art" aria-hidden>
             <span />

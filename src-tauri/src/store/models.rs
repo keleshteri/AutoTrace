@@ -179,6 +179,10 @@ pub struct Workspace {
     pub role: String,
     pub sync_url: Option<String>,
     pub is_active: bool,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub settings_json: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

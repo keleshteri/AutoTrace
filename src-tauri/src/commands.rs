@@ -735,6 +735,20 @@ pub fn create_workspace(state: State<'_, AppState>, name: String) -> Result<crat
 }
 
 #[tauri::command]
+pub fn update_workspace(
+    state: State<'_, AppState>,
+    id: i64,
+    name: String,
+    icon: String,
+    settings_json: String,
+) -> Result<crate::store::Workspace, String> {
+    state
+        .store
+        .update_workspace(id, &name, &icon, &settings_json)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn set_active_workspace(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     state.store.set_active_workspace(id).map_err(|e| e.to_string())
 }

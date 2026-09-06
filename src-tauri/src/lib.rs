@@ -93,6 +93,7 @@ pub fn run() {
             commands::export_client_pdf,
             commands::list_workspaces,
             commands::create_workspace,
+            commands::update_workspace,
             commands::set_active_workspace,
             commands::set_workspace_sync,
             commands::export_sync_pack,

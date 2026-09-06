@@ -28,6 +28,30 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+fn default_workspace_settings_json() -> String {
+    serde_json::json!({
+        "features": {
+            "profitability": true,
+            "invoicing": true,
+            "billable_hours": true,
+            "tasks": true,
+            "projects": true,
+            "clients": true,
+            "client_tagging": true,
+            "labels": true,
+            "team_creation_admin_only": false
+        },
+        "invoicing": {
+            "company_name": "",
+            "company_address": "",
+            "payment_instructions": "",
+            "default_payment_terms": "Net 30"
+        },
+        "logo_data_url": null
+    })
+    .to_string()
+}
+
 /// Thread-safe handle to the on-disk SQLite database.
 pub struct Store {
     conn: Mutex<Connection>,
@@ -1920,7 +1944,9 @@ impl Store {
     pub fn list_workspaces(&self) -> Result<Vec<Workspace>> {
         let conn = self.conn.lock().expect("store mutex poisoned");
         let mut stmt = conn.prepare(
-            "SELECT id, name, role, sync_url, is_active FROM workspaces ORDER BY id",
+            "SELECT id, name, role, sync_url, is_active,
+                    IFNULL(icon, 'briefcase'), IFNULL(settings_json, '{}')
+             FROM workspaces ORDER BY id",
         )?;
         let rows = stmt
             .query_map([], |row| {
@@ -1930,6 +1956,8 @@ impl Store {
                     role: row.get(2)?,
                     sync_url: row.get(3)?,
                     is_active: row.get::<_, i64>(4)? != 0,
+                    icon: row.get(5)?,
+                    settings_json: row.get(6)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1938,9 +1966,11 @@ impl Store {
 
     pub fn create_workspace(&self, name: &str) -> Result<Workspace> {
         let conn = self.conn.lock().expect("store mutex poisoned");
+        let settings = default_workspace_settings_json();
         conn.execute(
-            "INSERT INTO workspaces (name, role, is_active) VALUES (?1, 'owner', 0)",
-            params![name],
+            "INSERT INTO workspaces (name, role, is_active, icon, settings_json)
+             VALUES (?1, 'owner', 0, 'briefcase', ?2)",
+            params![name, settings],
         )?;
         let id = conn.last_insert_rowid();
         Ok(Workspace {
@@ -1949,7 +1979,31 @@ impl Store {
             role: "owner".into(),
             sync_url: None,
             is_active: false,
+            icon: "briefcase".into(),
+            settings_json: settings,
         })
+    }
+
+    pub fn update_workspace(
+        &self,
+        id: i64,
+        name: &str,
+        icon: &str,
+        settings_json: &str,
+    ) -> Result<Workspace> {
+        // Validate JSON
+        let _: serde_json::Value = serde_json::from_str(settings_json)
+            .map_err(|e| StoreError::Msg(format!("invalid settings_json: {e}")))?;
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute(
+            "UPDATE workspaces SET name = ?1, icon = ?2, settings_json = ?3 WHERE id = ?4",
+            params![name, icon, settings_json, id],
+        )?;
+        drop(conn);
+        self.list_workspaces()?
+            .into_iter()
+            .find(|w| w.id == id)
+            .ok_or_else(|| StoreError::Msg("workspace not found".into()))
     }
 
     pub fn set_active_workspace(&self, id: i64) -> Result<()> {
