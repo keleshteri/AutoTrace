@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   FocusSession,
+  PlannedSession,
   SessionRow,
   api,
   durationLabel,
@@ -115,6 +116,7 @@ export function CalendarView({
   const [range, setRange] = useState<CalRange>("day");
   const [lane, setLane] = useState<CalLane>("entries");
   const [focusList, setFocusList] = useState<FocusSession[]>([]);
+  const [plannedList, setPlannedList] = useState<PlannedSession[]>([]);
   const [weekData, setWeekData] = useState<DayBundle[]>([]);
   const [monthData, setMonthData] = useState<DayBundle[]>([]);
 
@@ -128,9 +130,15 @@ export function CalendarView({
 
   const refreshFocus = useCallback(async () => {
     try {
-      setFocusList(await api.listFocusForDay(day));
+      const [f, p] = await Promise.all([
+        api.listFocusForDay(day),
+        api.listPlannedForDay(day),
+      ]);
+      setFocusList(f);
+      setPlannedList(p);
     } catch {
       setFocusList([]);
+      setPlannedList([]);
     }
   }, [day]);
 
@@ -291,6 +299,7 @@ export function CalendarView({
           activitySessions={showActivityCol ? activitySource : []}
           focusSessions={showFocusCol ? focusList : []}
           breakSessions={showFocusCol ? sessions.filter((s) => s.idle) : []}
+          plannedSessions={showFocusCol ? plannedList : []}
           allSessions={sessions}
           selectedIds={selectedIds}
           onSelect={onSelect}
@@ -330,6 +339,7 @@ function DayDualCalendar({
   activitySessions,
   focusSessions,
   breakSessions,
+  plannedSessions,
   allSessions,
   selectedIds,
   onSelect,
@@ -341,6 +351,7 @@ function DayDualCalendar({
   activitySessions: SessionRow[];
   focusSessions: FocusSession[];
   breakSessions: SessionRow[];
+  plannedSessions: PlannedSession[];
   allSessions: SessionRow[];
   selectedIds: number[];
   onSelect: (session: SessionRow, additive: boolean) => void;
@@ -413,13 +424,19 @@ function DayDualCalendar({
   }, [liveSession, liveTick]);
 
   const sessionBlocks = useMemo(() => {
-    const focusSpans: TimedSpan[] = focusSessions.map((f) => ({
-      id: `f-${f.id}`,
-      started_at: f.started_at,
-      ended_at: f.ended_at,
-      label: f.goal?.trim() || "Focus",
-      color: FOCUS_COLOR,
-    }));
+    const focusSpans: TimedSpan[] = focusSessions.map((f) => {
+      const k = (f.kind || "focus").toLowerCase();
+      return {
+        id: `f-${f.id}`,
+        started_at: f.started_at,
+        ended_at: f.ended_at,
+        label:
+          f.goal?.trim() ||
+          (k === "meeting" ? "Meeting" : k === "break" ? "Break" : "Focus"),
+        color: k === "break" ? BREAK_COLOR : FOCUS_COLOR,
+        idle: k === "break",
+      };
+    });
     const breakSpans: TimedSpan[] = breakSessions
       .filter((s) => s.id !== liveSessionId)
       .map((s) => ({
@@ -431,14 +448,28 @@ function DayDualCalendar({
         sessionId: s.id,
         idle: true,
       }));
+    const plannedSpans: TimedSpan[] = plannedSessions
+      .filter((p) => p.status === "planned")
+      .map((p) => {
+        const k = (p.kind || "focus").toLowerCase();
+        return {
+          id: `p-${p.id}`,
+          started_at: p.started_at,
+          ended_at: p.ended_at,
+          label: p.title?.trim() || (k === "break" ? "Break" : k === "meeting" ? "Meeting" : "Focus"),
+          color: k === "break" ? BREAK_COLOR : FOCUS_COLOR,
+          planned: true,
+          idle: k === "break",
+        };
+      });
     const mergedFocus = coalesceSpans(focusSpans, () => "focus");
     const mergedBreaks = coalesceSpans(breakSpans, () => "break");
     return layoutBlocks(
-      [...mergedFocus, ...mergedBreaks],
+      [...mergedFocus, ...mergedBreaks, ...plannedSpans],
       DAY_START_HOUR,
       HOUR_HEIGHT,
     );
-  }, [focusSessions, breakSessions, liveSessionId]);
+  }, [focusSessions, breakSessions, plannedSessions, liveSessionId]);
 
   const cols = (showActivity ? 1 : 0) + (showFocus ? 1 : 0) || 1;
 
@@ -552,12 +583,13 @@ function DayDualCalendar({
                   const selected =
                     b.sessionId != null && selectedIds.includes(b.sessionId);
                   const isBreak = Boolean(b.idle);
+                  const plannedCls = b.planned ? " planned" : "";
                   if (b.sessionId != null) {
                     return (
                       <button
                         key={b.id}
                         type="button"
-                        className={`session-block ${isBreak ? "break" : "focus"}${selected ? " selected" : ""}`}
+                        className={`session-block ${isBreak ? "break" : "focus"}${plannedCls}${selected ? " selected" : ""}`}
                         style={blockStyle(b)}
                         title={`${b.label} · ${formatTime(b.started_at)} – ${b.ended_at ? formatTime(b.ended_at) : "now"}`}
                         onClick={(e) => pickSession(b.sessionId, e)}
@@ -576,11 +608,13 @@ function DayDualCalendar({
                   return (
                     <div
                       key={b.id}
-                      className={`session-block ${isBreak ? "break" : "focus"}`}
+                      className={`session-block ${isBreak ? "break" : "focus"}${plannedCls}`}
                       style={blockStyle(b)}
-                      title={`${b.label} · ${formatTime(b.started_at)} – ${b.ended_at ? formatTime(b.ended_at) : "now"}`}
+                      title={`${b.planned ? "Planned · " : ""}${b.label} · ${formatTime(b.started_at)} – ${b.ended_at ? formatTime(b.ended_at) : "now"}`}
                     >
-                      <div className="sb-title">{b.label}</div>
+                      <div className="sb-title">
+                        {b.planned ? `◇ ${b.label}` : b.label}
+                      </div>
                       {b.height > 34 && (
                         <div className="sb-meta">
                           {formatTime(b.started_at)} –{" "}

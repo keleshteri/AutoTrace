@@ -415,6 +415,8 @@ pub fn init_state(app: &AppHandle) -> Result<AppState, String> {
 
     let db_path = Store::default_db_path(&app_data);
     let store = Arc::new(Store::open(&db_path).map_err(|e| e.to_string())?);
+    // Leftover active focus from a previous process must not keep accruing.
+    let _ = store.reconcile_stale_focus_on_launch();
     let tracker = Arc::new(TrackerHandle::start(Arc::clone(&store)));
     let local_api = Arc::new(crate::integrations::LocalApiHandle::new(Arc::clone(&store)));
 
@@ -549,16 +551,98 @@ pub fn get_active_focus(
 }
 
 #[tauri::command]
+pub fn get_time_since_last_break(
+    state: State<'_, AppState>,
+) -> Result<crate::store::TimeSinceBreak, String> {
+    state
+        .store
+        .time_since_last_break_secs()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn mark_break_ended(
+    state: State<'_, AppState>,
+    at: Option<String>,
+) -> Result<(), String> {
+    let stamp = at.unwrap_or_else(|| {
+        chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    });
+    state
+        .store
+        .mark_break_ended(&stamp)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn start_focus(
     state: State<'_, AppState>,
     goal: Option<String>,
     client_id: Option<i64>,
     project_id: Option<i64>,
     task_id: Option<i64>,
+    kind: Option<String>,
+    duration_mins: Option<i64>,
+    category_override: Option<String>,
 ) -> Result<crate::store::FocusSession, String> {
+    let kind = kind.unwrap_or_else(|| "focus".into());
+    let planned = duration_mins
+        .filter(|m| *m > 0)
+        .map(|m| m.saturating_mul(60));
     state
         .store
-        .start_focus(goal.as_deref(), client_id, project_id, task_id)
+        .start_timer_session(
+            &kind,
+            goal.as_deref(),
+            client_id,
+            project_id,
+            task_id,
+            planned,
+            category_override.as_deref(),
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn extend_focus(
+    state: State<'_, AppState>,
+    extra_mins: Option<i64>,
+) -> Result<Option<crate::store::FocusSession>, String> {
+    let mins = extra_mins.unwrap_or_else(|| {
+        state
+            .store
+            .get_setting("session_extend_mins")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5)
+    });
+    state
+        .store
+        .extend_focus(mins.saturating_mul(60).max(60))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn suggest_planned_from_calendar(
+    state: State<'_, AppState>,
+    day: String,
+) -> Result<Vec<crate::store::PlannedSession>, String> {
+    state
+        .store
+        .suggest_planned_from_calendar(&day)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn maybe_auto_detect_sessions(
+    state: State<'_, AppState>,
+) -> Result<Option<crate::store::FocusSession>, String> {
+    state
+        .store
+        .maybe_auto_detect_sessions()
         .map_err(|e| e.to_string())
 }
 
@@ -592,6 +676,159 @@ pub fn list_focus_for_day(
         .store
         .list_focus_for_day(&day)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_planned_for_day(
+    state: State<'_, AppState>,
+    day: String,
+) -> Result<Vec<crate::store::PlannedSession>, String> {
+    state
+        .store
+        .list_planned_for_day(&day)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_planned_session(
+    state: State<'_, AppState>,
+    kind: String,
+    title: Option<String>,
+    started_at: String,
+    ended_at: String,
+    goal: Option<String>,
+    client_id: Option<i64>,
+    project_id: Option<i64>,
+    task_id: Option<i64>,
+) -> Result<crate::store::PlannedSession, String> {
+    state
+        .store
+        .create_planned_session(
+            &kind,
+            title.as_deref(),
+            &started_at,
+            &ended_at,
+            goal.as_deref(),
+            client_id,
+            project_id,
+            task_id,
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_planned_status(
+    state: State<'_, AppState>,
+    id: i64,
+    status: String,
+) -> Result<Option<crate::store::PlannedSession>, String> {
+    state
+        .store
+        .set_planned_status(id, &status)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_planned_session(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    state
+        .store
+        .delete_planned_session(id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn clear_planned_for_day(state: State<'_, AppState>, day: String) -> Result<usize, String> {
+    state
+        .store
+        .clear_planned_for_day(&day)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn plan_pomodoro(
+    state: State<'_, AppState>,
+    day: String,
+    start_at: Option<String>,
+    focus_mins: Option<i64>,
+    break_mins: Option<i64>,
+    long_break_mins: Option<i64>,
+    rounds: Option<i64>,
+) -> Result<Vec<crate::store::PlannedSession>, String> {
+    let focus = focus_mins.unwrap_or_else(|| {
+        state
+            .store
+            .get_setting("pomodoro_focus_mins")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(25)
+    });
+    let br = break_mins.unwrap_or_else(|| {
+        state
+            .store
+            .get_setting("pomodoro_break_mins")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5)
+    });
+    let long_br = long_break_mins.unwrap_or_else(|| {
+        state
+            .store
+            .get_setting("pomodoro_long_break_mins")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(15)
+    });
+    let rounds = rounds.unwrap_or_else(|| {
+        state
+            .store
+            .get_setting("pomodoro_rounds")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4)
+    });
+    state
+        .store
+        .plan_pomodoro(
+            &day,
+            start_at.as_deref(),
+            focus,
+            br,
+            long_br,
+            rounds,
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn plan_schedule(
+    state: State<'_, AppState>,
+    day: String,
+    instructions: String,
+    start_at: Option<String>,
+) -> Result<Vec<crate::store::PlannedSession>, String> {
+    state
+        .store
+        .plan_schedule_from_instructions(&day, &instructions, start_at.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn start_from_planned(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<crate::store::FocusSession, String> {
+    state.store.start_from_planned(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn next_due_planned(
+    state: State<'_, AppState>,
+) -> Result<Option<crate::store::PlannedSession>, String> {
+    state.store.next_due_planned().map_err(|e| e.to_string())
 }
 
 #[tauri::command]

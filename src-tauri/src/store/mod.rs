@@ -10,7 +10,7 @@ mod schema;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use chrono::Datelike;
+use chrono::{Datelike, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
 
@@ -178,11 +178,25 @@ impl Store {
     }
 
     pub fn end_session(&self, session_id: i64, ended_at: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("store mutex poisoned");
-        conn.execute(
-            "UPDATE sessions SET ended_at = ?1, updated_at = datetime('now') WHERE id = ?2",
-            params![ended_at, session_id],
-        )?;
+        let idle = {
+            let conn = self.conn.lock().expect("store mutex poisoned");
+            let idle: i64 = conn
+                .query_row(
+                    "SELECT idle FROM sessions WHERE id = ?1",
+                    params![session_id],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            conn.execute(
+                "UPDATE sessions SET ended_at = ?1, updated_at = datetime('now') WHERE id = ?2",
+                params![ended_at, session_id],
+            )?;
+            idle
+        };
+        // Idle gaps count as breaks for the "time since last break" clock.
+        if idle != 0 {
+            let _ = self.mark_break_ended(ended_at);
+        }
         Ok(())
     }
 
@@ -1444,13 +1458,77 @@ impl Store {
 
     // —— Focus timer ——
 
+    /// On cold start any leftover `active` row is from a dead process — pause it
+    /// without accruing wall-clock downtime into focus time.
+    pub fn reconcile_stale_focus_on_launch(&self) -> Result<Option<FocusSession>> {
+        let Some(active) = self.get_active_focus()? else {
+            return Ok(None);
+        };
+        if active.status != "active" {
+            return Ok(Some(active));
+        }
+        let now = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        {
+            let conn = self.conn.lock().expect("store mutex poisoned");
+            // Keep accumulated_secs as-is; discard the open segment (unknown
+            // downtime while the process was dead / force-killed).
+            conn.execute(
+                "UPDATE focus_sessions SET status = 'paused', paused_at = ?1
+                 WHERE id = ?2 AND status = 'active'",
+                params![now, active.id],
+            )?;
+        }
+        self.get_active_focus()
+    }
+
+    /// Mark that a break just ended (manual or idle). Resets "time since last break".
+    pub fn mark_break_ended(&self, at: &str) -> Result<()> {
+        self.set_setting("last_break_at", at)
+    }
+
+    /// Seconds since the last recorded break. Falls back to the latest idle/Break
+    /// session end, then to "now" (so first launch does not show a huge number).
+    pub fn time_since_last_break_secs(&self) -> Result<TimeSinceBreak> {
+        let now = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let last = self.resolve_last_break_at()?.unwrap_or_else(|| now.clone());
+        let secs = (parse_local_ts(&now) - parse_local_ts(&last)).max(0);
+        Ok(TimeSinceBreak {
+            secs,
+            last_break_at: last,
+        })
+    }
+
+    fn resolve_last_break_at(&self) -> Result<Option<String>> {
+        if let Some(v) = self.get_setting("last_break_at")? {
+            if !v.trim().is_empty() {
+                return Ok(Some(v));
+            }
+        }
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let row: Option<String> = conn
+            .query_row(
+                "SELECT IFNULL(ended_at, started_at) FROM sessions
+                 WHERE idle = 1 OR category = 'Break'
+                 ORDER BY IFNULL(ended_at, started_at) DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     pub fn get_active_focus(&self) -> Result<Option<FocusSession>> {
         let conn = self.conn.lock().expect("store mutex poisoned");
         let row = conn
             .query_row(
                 "SELECT f.id, f.goal, f.client_id, f.project_id, f.task_id,
                         c.name, p.name, t.name, f.started_at, f.ended_at, f.status,
-                        IFNULL(f.accumulated_secs, 0), f.segment_started_at, f.paused_at
+                        IFNULL(f.accumulated_secs, 0), f.segment_started_at, f.paused_at,
+                        IFNULL(f.kind, 'focus'), f.planned_secs, f.category_override
                  FROM focus_sessions f
                  LEFT JOIN clients c ON c.id = f.client_id
                  LEFT JOIN projects p ON p.id = f.project_id
@@ -1471,10 +1549,27 @@ impl Store {
         project_id: Option<i64>,
         task_id: Option<i64>,
     ) -> Result<FocusSession> {
+        self.start_timer_session("focus", goal, client_id, project_id, task_id, None, None)
+    }
+
+    /// Start a Focus, Meeting, or Break timer session.
+    /// If another session is already running, it is ended first (Rize-style switch).
+    pub fn start_timer_session(
+        &self,
+        kind: &str,
+        goal: Option<&str>,
+        client_id: Option<i64>,
+        project_id: Option<i64>,
+        task_id: Option<i64>,
+        planned_secs: Option<i64>,
+        category_override: Option<&str>,
+    ) -> Result<FocusSession> {
+        let kind = normalize_session_kind(kind)?;
+        let override_cat = category_override
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         if self.get_active_focus()?.is_some() {
-            return Err(StoreError::Msg(
-                "A focus session is already running — end it first".into(),
-            ));
+            let _ = self.end_focus()?;
         }
         let now = chrono::Local::now()
             .format("%Y-%m-%dT%H:%M:%S")
@@ -1482,13 +1577,42 @@ impl Store {
         {
             let conn = self.conn.lock().expect("store mutex poisoned");
             conn.execute(
-                "INSERT INTO focus_sessions (goal, client_id, project_id, task_id, started_at, status, accumulated_secs, segment_started_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'active', 0, ?5)",
-                params![goal, client_id, project_id, task_id, now],
+                "INSERT INTO focus_sessions
+                   (goal, client_id, project_id, task_id, started_at, status,
+                    accumulated_secs, segment_started_at, kind, planned_secs, category_override)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'active', 0, ?5, ?6, ?7, ?8)",
+                params![
+                    goal,
+                    client_id,
+                    project_id,
+                    task_id,
+                    now,
+                    kind,
+                    planned_secs,
+                    override_cat
+                ],
             )?;
         }
         self.get_active_focus()?
-            .ok_or_else(|| StoreError::Msg("failed to start focus".into()))
+            .ok_or_else(|| StoreError::Msg("failed to start session".into()))
+    }
+
+    /// Add seconds to the active session's planned duration (Rize-style extend).
+    pub fn extend_focus(&self, extra_secs: i64) -> Result<Option<FocusSession>> {
+        let Some(active) = self.get_active_focus()? else {
+            return Ok(None);
+        };
+        let extra = extra_secs.max(60);
+        let base = active.planned_secs.unwrap_or(active.elapsed_secs.max(0));
+        let next = base + extra;
+        {
+            let conn = self.conn.lock().expect("store mutex poisoned");
+            conn.execute(
+                "UPDATE focus_sessions SET planned_secs = ?1 WHERE id = ?2",
+                params![next, active.id],
+            )?;
+        }
+        self.get_active_focus()
     }
 
     pub fn pause_focus(&self) -> Result<Option<FocusSession>> {
@@ -1550,7 +1674,7 @@ impl Store {
         let now = chrono::Local::now()
             .format("%Y-%m-%dT%H:%M:%S")
             .to_string();
-        {
+        let final_accum = {
             let conn = self.conn.lock().expect("store mutex poisoned");
             let (accum, segment_started, status): (i64, String, String) = conn.query_row(
                 "SELECT IFNULL(accumulated_secs,0), IFNULL(segment_started_at, started_at), status
@@ -1563,33 +1687,53 @@ impl Store {
             } else {
                 accum
             };
+            // Calendar / ended_at use started_at + worked seconds so days offline
+            // after quit (paused) never become a multi-day Focus block.
+            let session_end = add_secs_to_local_ts(&active.started_at, final_accum.max(0));
             conn.execute(
                 "UPDATE focus_sessions SET ended_at = ?1, status = 'ended', accumulated_secs = ?2, paused_at = NULL
                  WHERE id = ?3",
-                params![now, final_accum, active.id],
+                params![session_end, final_accum, active.id],
             )?;
-        }
-        // Mirror onto calendar as a tagged manual session.
+            final_accum
+        };
+        let session_end = add_secs_to_local_ts(&active.started_at, final_accum.max(0));
+        let kind = active.kind.as_str();
+        let (default_title, notes, default_category) = match kind {
+            "meeting" => ("Meeting", "Meeting session", "Meeting"),
+            "break" => ("Break", "Break session", "Break"),
+            _ => ("Focus", "Focus session", "Focus"),
+        };
+        let category = active
+            .category_override
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(default_category);
         let title = active
             .goal
             .clone()
             .filter(|g| !g.trim().is_empty())
-            .unwrap_or_else(|| "Focus".into());
+            .unwrap_or_else(|| default_title.into());
         let _ = self.create_manual_session(
             &title,
             &active.started_at,
-            &now,
+            &session_end,
             active.client_id,
             active.project_id,
             active.task_id,
-            Some("Focus session"),
-            Some("Focus"),
+            Some(notes),
+            Some(category),
         );
+        if kind == "break" {
+            let _ = self.mark_break_ended(&session_end);
+        }
         let conn = self.conn.lock().expect("store mutex poisoned");
         let row = conn.query_row(
             "SELECT f.id, f.goal, f.client_id, f.project_id, f.task_id,
                     c.name, p.name, t.name, f.started_at, f.ended_at, f.status,
-                    IFNULL(f.accumulated_secs, 0), f.segment_started_at, f.paused_at
+                    IFNULL(f.accumulated_secs, 0), f.segment_started_at, f.paused_at,
+                    IFNULL(f.kind, 'focus'), f.planned_secs, f.category_override
              FROM focus_sessions f
              LEFT JOIN clients c ON c.id = f.client_id
              LEFT JOIN projects p ON p.id = f.project_id
@@ -1608,7 +1752,8 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT f.id, f.goal, f.client_id, f.project_id, f.task_id,
                     c.name, p.name, t.name, f.started_at, f.ended_at, f.status,
-                    IFNULL(f.accumulated_secs, 0), f.segment_started_at, f.paused_at
+                    IFNULL(f.accumulated_secs, 0), f.segment_started_at, f.paused_at,
+                    IFNULL(f.kind, 'focus'), f.planned_secs, f.category_override
              FROM focus_sessions f
              LEFT JOIN clients c ON c.id = f.client_id
              LEFT JOIN projects p ON p.id = f.project_id
@@ -1620,6 +1765,356 @@ impl Store {
             .query_map(params![start, end], map_focus_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    // —— Planned sessions (Timer timeline / Pomodoro) ——
+
+    pub fn list_planned_for_day(&self, day: &str) -> Result<Vec<PlannedSession>> {
+        let start = format!("{day}T00:00:00");
+        let end = format!("{day}T23:59:59");
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, title, started_at, ended_at, duration_secs, status, goal,
+                    client_id, project_id, task_id
+             FROM planned_sessions
+             WHERE started_at >= ?1 AND started_at <= ?2
+             ORDER BY started_at ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![start, end], map_planned_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_planned(&self, id: i64) -> Result<Option<PlannedSession>> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let row = conn
+            .query_row(
+                "SELECT id, kind, title, started_at, ended_at, duration_secs, status, goal,
+                        client_id, project_id, task_id
+                 FROM planned_sessions WHERE id = ?1",
+                params![id],
+                map_planned_row,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn create_planned_session(
+        &self,
+        kind: &str,
+        title: Option<&str>,
+        started_at: &str,
+        ended_at: &str,
+        goal: Option<&str>,
+        client_id: Option<i64>,
+        project_id: Option<i64>,
+        task_id: Option<i64>,
+    ) -> Result<PlannedSession> {
+        let kind = normalize_session_kind(kind)?;
+        let duration = (parse_local_ts(ended_at) - parse_local_ts(started_at)).max(60);
+        let title = title
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .or_else(|| Some(default_planned_title(kind).into()));
+        let id = {
+            let conn = self.conn.lock().expect("store mutex poisoned");
+            conn.execute(
+                "INSERT INTO planned_sessions
+                   (kind, title, started_at, ended_at, duration_secs, status, goal,
+                    client_id, project_id, task_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'planned', ?6, ?7, ?8, ?9)",
+                params![
+                    kind,
+                    title,
+                    started_at,
+                    ended_at,
+                    duration,
+                    goal,
+                    client_id,
+                    project_id,
+                    task_id
+                ],
+            )?;
+            conn.last_insert_rowid()
+        };
+        self.get_planned(id)?
+            .ok_or_else(|| StoreError::Msg("failed to create planned session".into()))
+    }
+
+    pub fn set_planned_status(&self, id: i64, status: &str) -> Result<Option<PlannedSession>> {
+        let status = match status.trim().to_ascii_lowercase().as_str() {
+            "planned" | "started" | "skipped" | "dismissed" => status.trim().to_ascii_lowercase(),
+            other => {
+                return Err(StoreError::Msg(format!("Invalid planned status '{other}'")));
+            }
+        };
+        {
+            let conn = self.conn.lock().expect("store mutex poisoned");
+            let n = conn.execute(
+                "UPDATE planned_sessions SET status = ?1 WHERE id = ?2",
+                params![status, id],
+            )?;
+            if n == 0 {
+                return Ok(None);
+            }
+        }
+        self.get_planned(id)
+    }
+
+    pub fn delete_planned_session(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        conn.execute("DELETE FROM planned_sessions WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn clear_planned_for_day(&self, day: &str) -> Result<usize> {
+        let start = format!("{day}T00:00:00");
+        let end = format!("{day}T23:59:59");
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let n = conn.execute(
+            "DELETE FROM planned_sessions
+             WHERE started_at >= ?1 AND started_at <= ?2
+               AND status = 'planned'",
+            params![start, end],
+        )?;
+        Ok(n)
+    }
+
+    /// Classic Pomodoro: N focus blocks with short breaks, then a long break.
+    pub fn plan_pomodoro(
+        &self,
+        day: &str,
+        start_at: Option<&str>,
+        focus_mins: i64,
+        break_mins: i64,
+        long_break_mins: i64,
+        rounds: i64,
+    ) -> Result<Vec<PlannedSession>> {
+        let focus_mins = focus_mins.clamp(5, 120);
+        let break_mins = break_mins.clamp(1, 60);
+        let long_break_mins = long_break_mins.clamp(5, 120);
+        let rounds = rounds.clamp(1, 12);
+
+        let start = if let Some(s) = start_at.filter(|s| !s.trim().is_empty()) {
+            s.to_string()
+        } else {
+            // Round up to next 5 minutes from now (same calendar day preferred).
+            let now = chrono::Local::now();
+            let mut t = now + chrono::Duration::minutes(1);
+            let rem = t.minute() % 5;
+            if rem != 0 {
+                t += chrono::Duration::minutes((5 - rem) as i64);
+            }
+            t = t.with_second(0).unwrap_or(t);
+            let day_date = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok();
+            if let Some(d) = day_date {
+                if t.date_naive() != d {
+                    // Start at 09:00 on requested day if "now" is a different day.
+                    format!("{day}T09:00:00")
+                } else {
+                    t.format("%Y-%m-%dT%H:%M:%S").to_string()
+                }
+            } else {
+                t.format("%Y-%m-%dT%H:%M:%S").to_string()
+            }
+        };
+
+        // Clear leftover planned blocks for the day before inserting a fresh plan.
+        let _ = self.clear_planned_for_day(day);
+
+        let mut cursor = parse_local_ts(&start);
+        let mut created = Vec::new();
+        for i in 1..=rounds {
+            let focus_end = cursor + focus_mins * 60;
+            let f = self.create_planned_session(
+                "focus",
+                Some("Focus Session"),
+                &ts_to_local(cursor),
+                &ts_to_local(focus_end),
+                None,
+                None,
+                None,
+                None,
+            )?;
+            created.push(f);
+            cursor = focus_end;
+            if i < rounds {
+                let br_end = cursor + break_mins * 60;
+                let b = self.create_planned_session(
+                    "break",
+                    Some("Break"),
+                    &ts_to_local(cursor),
+                    &ts_to_local(br_end),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
+                created.push(b);
+                cursor = br_end;
+            } else if long_break_mins > 0 {
+                let br_end = cursor + long_break_mins * 60;
+                let b = self.create_planned_session(
+                    "break",
+                    Some("Long Break"),
+                    &ts_to_local(cursor),
+                    &ts_to_local(br_end),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
+                created.push(b);
+            }
+        }
+        Ok(created)
+    }
+
+    /// Lightweight schedule planner from free-text instructions (no AI required).
+    /// Recognizes pomodoro / focus+break durations and an optional end time.
+    pub fn plan_schedule_from_instructions(
+        &self,
+        day: &str,
+        instructions: &str,
+        start_at: Option<&str>,
+    ) -> Result<Vec<PlannedSession>> {
+        let permanent = self
+            .get_setting("planning_instructions")?
+            .unwrap_or_default();
+        let merged = if permanent.trim().is_empty() {
+            instructions.to_string()
+        } else if instructions.trim().is_empty() {
+            permanent
+        } else {
+            format!("{permanent}\n{instructions}")
+        };
+        let lower = merged.to_ascii_lowercase();
+        let focus = extract_mins(&lower, &["focus", "work", "pomodoro"]).unwrap_or(25);
+        let short_break = extract_mins(&lower, &["break", "rest"]).unwrap_or(5);
+        let long_break = extract_mins(&lower, &["long break"]).unwrap_or(15);
+        let rounds = extract_number_before(&lower, &["rounds", "sessions", "cycles"]).unwrap_or(4);
+
+        // If user mentioned a hard stop like "until 2pm" / "until 14:00", fill until then.
+        if let Some(until) = parse_until_time(&lower, day) {
+            let _ = self.clear_planned_for_day(day);
+            let start = start_at
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    let now = chrono::Local::now();
+                    if now.format("%Y-%m-%d").to_string() == day {
+                        let mut t = now + chrono::Duration::minutes(1);
+                        let rem = t.minute() % 5;
+                        if rem != 0 {
+                            t += chrono::Duration::minutes((5 - rem) as i64);
+                        }
+                        t.with_second(0)
+                            .unwrap_or(t)
+                            .format("%Y-%m-%dT%H:%M:%S")
+                            .to_string()
+                    } else {
+                        format!("{day}T09:00:00")
+                    }
+                });
+            let mut cursor = parse_local_ts(&start);
+            let until_ts = parse_local_ts(&until);
+            let mut created = Vec::new();
+            let mut round = 0i64;
+            while cursor + focus * 60 <= until_ts {
+                round += 1;
+                let focus_end = cursor + focus * 60;
+                created.push(self.create_planned_session(
+                    "focus",
+                    Some("Focus Session"),
+                    &ts_to_local(cursor),
+                    &ts_to_local(focus_end),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?);
+                cursor = focus_end;
+                let is_long = round % 4 == 0;
+                let br = if is_long { long_break } else { short_break };
+                if cursor + br * 60 > until_ts {
+                    break;
+                }
+                let br_end = cursor + br * 60;
+                created.push(self.create_planned_session(
+                    "break",
+                    Some(if is_long { "Long Break" } else { "Break" }),
+                    &ts_to_local(cursor),
+                    &ts_to_local(br_end),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?);
+                cursor = br_end;
+            }
+            if created.is_empty() {
+                return Err(StoreError::Msg(
+                    "Could not fit any sessions before the end time — try a later until time"
+                        .into(),
+                ));
+            }
+            return Ok(created);
+        }
+
+        self.plan_pomodoro(
+            day,
+            start_at,
+            focus,
+            short_break,
+            long_break,
+            rounds,
+        )
+    }
+
+    /// Start a planned block as the live timer session and mark it started.
+    pub fn start_from_planned(&self, id: i64) -> Result<FocusSession> {
+        let Some(plan) = self.get_planned(id)? else {
+            return Err(StoreError::Msg("Planned session not found".into()));
+        };
+        if plan.status != "planned" {
+            return Err(StoreError::Msg(format!(
+                "Planned session is already {}",
+                plan.status
+            )));
+        }
+        let mins = (plan.duration_secs / 60).max(1);
+        let session = self.start_timer_session(
+            &plan.kind,
+            plan.goal.as_deref().or(plan.title.as_deref()),
+            plan.client_id,
+            plan.project_id,
+            plan.task_id,
+            Some(plan.duration_secs.max(60)),
+            None,
+        )?;
+        let _ = mins;
+        let _ = self.set_planned_status(id, "started")?;
+        Ok(session)
+    }
+
+    pub fn next_due_planned(&self) -> Result<Option<PlannedSession>> {
+        let now_ts = chrono::Local::now().timestamp();
+        // Include sessions starting within the next 90 seconds ("starts soon").
+        let horizon = ts_to_local(now_ts + 90);
+        let conn = self.conn.lock().expect("store mutex poisoned");
+        let row = conn
+            .query_row(
+                "SELECT id, kind, title, started_at, ended_at, duration_secs, status, goal,
+                        client_id, project_id, task_id
+                 FROM planned_sessions
+                 WHERE status = 'planned' AND started_at <= ?1
+                 ORDER BY started_at ASC LIMIT 1",
+                params![horizon],
+                map_planned_row,
+            )
+            .optional()?;
+        Ok(row)
     }
 
     // —— Activity events ——
@@ -2327,6 +2822,132 @@ impl Store {
         Ok(())
     }
 
+    /// Turn today's calendar events into planned Meeting blocks (skip duplicates).
+    pub fn suggest_planned_from_calendar(&self, day: &str) -> Result<Vec<PlannedSession>> {
+        let events = self.list_calendar_events(day)?;
+        let existing = self.list_planned_for_day(day)?;
+        let mut created = Vec::new();
+        for ev in events {
+            let dup = existing.iter().any(|p| {
+                p.started_at == ev.started_at
+                    && p.title.as_deref().unwrap_or("") == ev.title.as_str()
+            }) || created.iter().any(|p: &PlannedSession| {
+                p.started_at == ev.started_at
+                    && p.title.as_deref().unwrap_or("") == ev.title.as_str()
+            });
+            if dup {
+                continue;
+            }
+            let row = self.create_planned_session(
+                "meeting",
+                Some(&ev.title),
+                &ev.started_at,
+                &ev.ended_at,
+                Some("From calendar"),
+                None,
+                None,
+                None,
+            )?;
+            created.push(row);
+        }
+        Ok(created)
+    }
+
+    /// Optional auto Focus / Break when settings are enabled and no timer is running.
+    pub fn maybe_auto_detect_sessions(&self) -> Result<Option<FocusSession>> {
+        if self.get_active_focus()?.is_some() {
+            return Ok(None);
+        }
+        let auto_focus = self.get_setting("auto_focus_detect")?.as_deref() == Some("1");
+        let auto_break = self.get_setting("auto_break_detect")?.as_deref() == Some("1");
+        if !auto_focus && !auto_break {
+            return Ok(None);
+        }
+
+        let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let sessions = self.sessions_for_day(&day)?;
+        let now_ts = chrono::Local::now().timestamp();
+
+        // Prefer auto-break when currently idle long enough.
+        if auto_break {
+            if let Some(last) = sessions.last() {
+                if last.idle {
+                    let started = parse_local_ts(&last.started_at);
+                    let idle_secs = (now_ts - started).max(0);
+                    let every = self
+                        .get_setting("break_every_mins")?
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(45)
+                        * 60;
+                    let len = self
+                        .get_setting("break_length_mins")?
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(5)
+                        * 60;
+                    let since = self.time_since_last_break_secs()?.secs;
+                    if idle_secs >= 120 && since >= every {
+                        return self
+                            .start_timer_session(
+                                "break",
+                                Some("Auto break"),
+                                None,
+                                None,
+                                None,
+                                Some(len.max(60)),
+                                None,
+                            )
+                            .map(Some);
+                    }
+                }
+            }
+        }
+
+        // Auto-focus: last ~15 minutes of non-idle activity mostly Focus/Code.
+        if auto_focus {
+            let window = now_ts - 15 * 60;
+            let mut focusish = 0i64;
+            let mut total = 0i64;
+            for s in &sessions {
+                if s.idle {
+                    continue;
+                }
+                let start = parse_local_ts(&s.started_at);
+                let end = s
+                    .ended_at
+                    .as_deref()
+                    .map(parse_local_ts)
+                    .unwrap_or(now_ts);
+                if end < window {
+                    continue;
+                }
+                let overlap = (end.min(now_ts) - start.max(window)).max(0);
+                total += overlap;
+                let cat = s.category.as_deref().unwrap_or("");
+                if cat.eq_ignore_ascii_case("Focus") || cat.eq_ignore_ascii_case("Code") {
+                    focusish += overlap;
+                }
+            }
+            if total >= 10 * 60 && focusish * 100 / total >= 75 {
+                let mins = self
+                    .get_setting("focus_default_mins")?
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .unwrap_or(45);
+                return self
+                    .start_timer_session(
+                        "focus",
+                        Some("Auto focus"),
+                        None,
+                        None,
+                        None,
+                        Some(mins.max(1) * 60),
+                        None,
+                    )
+                    .map(Some);
+            }
+        }
+
+        Ok(None)
+    }
 
 }
 
@@ -2348,6 +2969,9 @@ fn map_focus_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FocusSession> {
     let status: String = row.get(10)?;
     let accumulated: i64 = row.get::<_, i64>(11).unwrap_or(0);
     let segment_started: Option<String> = row.get(12)?;
+    let kind: String = row.get::<_, String>(14).unwrap_or_else(|_| "focus".into());
+    let planned_secs: Option<i64> = row.get(15)?;
+    let category_override: Option<String> = row.get(16)?;
     let now = chrono::Local::now().timestamp();
     let elapsed = match status.as_str() {
         "active" => {
@@ -2375,7 +2999,163 @@ fn map_focus_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FocusSession> {
         ended_at,
         status,
         elapsed_secs: elapsed,
+        kind,
+        planned_secs,
+        category_override,
     })
+}
+
+fn normalize_session_kind(kind: &str) -> Result<&'static str> {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "focus" | "" => Ok("focus"),
+        "meeting" => Ok("meeting"),
+        "break" => Ok("break"),
+        other => Err(StoreError::Msg(format!(
+            "Unknown session kind '{other}' (use focus, meeting, or break)"
+        ))),
+    }
+}
+
+fn default_planned_title(kind: &str) -> &'static str {
+    match kind {
+        "meeting" => "Meeting",
+        "break" => "Break",
+        _ => "Focus Session",
+    }
+}
+
+fn map_planned_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlannedSession> {
+    Ok(PlannedSession {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        title: row.get(2)?,
+        started_at: row.get(3)?,
+        ended_at: row.get(4)?,
+        duration_secs: row.get(5)?,
+        status: row.get(6)?,
+        goal: row.get(7)?,
+        client_id: row.get(8)?,
+        project_id: row.get(9)?,
+        task_id: row.get(10)?,
+    })
+}
+
+fn ts_to_local(ts: i64) -> String {
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|utc| {
+            utc.with_timezone(&chrono::Local)
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string())
+}
+
+fn extract_mins(text: &str, keys: &[&str]) -> Option<i64> {
+    for key in keys {
+        // "25 min focus" / "focus 25 min" / "25-min focus"
+        if let Some(idx) = text.find(key) {
+            let window_start = idx.saturating_sub(12);
+            let window = &text[window_start..std::cmp::min(text.len(), idx + key.len() + 12)];
+            if let Some(n) = number_near_min(window) {
+                return Some(n);
+            }
+        }
+    }
+    if text.contains("pomodoro") {
+        number_near_min(text).filter(|n| (15..=60).contains(n))
+    } else {
+        None
+    }
+}
+
+fn number_near_min(text: &str) -> Option<i64> {
+    for (i, _) in text.match_indices("min") {
+        let before = &text[..i];
+        let digits: String = before
+            .chars()
+            .rev()
+            .skip_while(|c| !c.is_ascii_digit())
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        if let Ok(n) = digits.parse::<i64>() {
+            if n > 0 {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+fn extract_number_before(text: &str, keys: &[&str]) -> Option<i64> {
+    for key in keys {
+        let needle = format!(" {key}");
+        if let Some(idx) = text.find(&needle) {
+            let before = &text[..idx];
+            if let Some(n) = before
+                .split_whitespace()
+                .rev()
+                .find_map(|w| w.parse::<i64>().ok())
+            {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+fn parse_until_time(text: &str, day: &str) -> Option<String> {
+    // until 2pm / until 14:00 / until 2:30 pm
+    let idx = text.find("until")?;
+    let after = text[idx + 5..].trim_start();
+    let token = after.split_whitespace().next()?;
+    let cleaned = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != ':');
+    let (h, m) = parse_clock_token(cleaned)?;
+    Some(format!("{day}T{h:02}:{m:02}:00"))
+}
+
+fn parse_clock_token(token: &str) -> Option<(u32, u32)> {
+    let t = token.to_ascii_lowercase();
+    if let Some((h, rest)) = t.split_once(':') {
+        let hour: u32 = h.parse().ok()?;
+        let digit_mins: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let mins: u32 = digit_mins.parse().unwrap_or(0);
+        let ampm = if rest.contains("pm") {
+            "pm"
+        } else if rest.contains("am") {
+            "am"
+        } else {
+            ""
+        };
+        let mut hour = hour;
+        if ampm == "pm" && hour < 12 {
+            hour += 12;
+        }
+        if ampm == "am" && hour == 12 {
+            hour = 0;
+        }
+        return Some((hour, mins.min(59)));
+    }
+    if t.ends_with("pm") || t.ends_with("am") {
+        let ampm = &t[t.len() - 2..];
+        let hour: u32 = t[..t.len() - 2].parse().ok()?;
+        let mut hour = hour;
+        if ampm == "pm" && hour < 12 {
+            hour += 12;
+        }
+        if ampm == "am" && hour == 12 {
+            hour = 0;
+        }
+        return Some((hour, 0));
+    }
+    let hour: u32 = t.parse().ok()?;
+    if hour <= 23 {
+        Some((hour, 0))
+    } else {
+        None
+    }
 }
 
 fn map_activity_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ActivityEvent> {
@@ -2402,6 +3182,17 @@ fn parse_local_ts(iso: &str) -> i64 {
             .unwrap_or(0);
     }
     0
+}
+
+fn add_secs_to_local_ts(iso: &str, secs: i64) -> String {
+    let ts = parse_local_ts(iso) + secs.max(0);
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|utc| {
+            utc.with_timezone(&chrono::Local)
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| iso.to_string())
 }
 
 fn domain_only(url: &str) -> String {

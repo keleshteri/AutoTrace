@@ -395,21 +395,93 @@ export const api = {
     }),
   localApiStatus: () => invoke<string>("local_api_status"),
   getActiveFocus: () => invoke<FocusSession | null>("get_active_focus"),
+  getTimeSinceLastBreak: () =>
+    invoke<TimeSinceBreak>("get_time_since_last_break"),
+  markBreakEnded: (at?: string) =>
+    invoke<void>("mark_break_ended", { at: at ?? null }),
   startFocus: (payload?: {
     goal?: string;
     clientId?: number | null;
     projectId?: number | null;
     taskId?: number | null;
+    kind?: SessionKind | string;
+    durationMins?: number | null;
+    categoryOverride?: string | null;
   }) =>
     invoke<FocusSession>("start_focus", {
       goal: payload?.goal ?? null,
       clientId: payload?.clientId ?? null,
       projectId: payload?.projectId ?? null,
       taskId: payload?.taskId ?? null,
+      kind: payload?.kind ?? "focus",
+      durationMins: payload?.durationMins ?? null,
+      categoryOverride: payload?.categoryOverride ?? null,
     }),
+  extendFocus: (extraMins?: number) =>
+    invoke<FocusSession | null>("extend_focus", {
+      extraMins: extraMins ?? null,
+    }),
+  suggestPlannedFromCalendar: (day: string) =>
+    invoke<PlannedSession[]>("suggest_planned_from_calendar", { day }),
+  maybeAutoDetectSessions: () =>
+    invoke<FocusSession | null>("maybe_auto_detect_sessions"),
   endFocus: () => invoke<FocusSession | null>("end_focus"),
   listFocusForDay: (day: string) =>
     invoke<FocusSession[]>("list_focus_for_day", { day }),
+  listPlannedForDay: (day: string) =>
+    invoke<PlannedSession[]>("list_planned_for_day", { day }),
+  createPlannedSession: (payload: {
+    kind: SessionKind | string;
+    title?: string;
+    startedAt: string;
+    endedAt: string;
+    goal?: string;
+    clientId?: number | null;
+    projectId?: number | null;
+    taskId?: number | null;
+  }) =>
+    invoke<PlannedSession>("create_planned_session", {
+      kind: payload.kind,
+      title: payload.title ?? null,
+      startedAt: payload.startedAt,
+      endedAt: payload.endedAt,
+      goal: payload.goal ?? null,
+      clientId: payload.clientId ?? null,
+      projectId: payload.projectId ?? null,
+      taskId: payload.taskId ?? null,
+    }),
+  setPlannedStatus: (id: number, status: string) =>
+    invoke<PlannedSession | null>("set_planned_status", { id, status }),
+  deletePlannedSession: (id: number) =>
+    invoke<void>("delete_planned_session", { id }),
+  clearPlannedForDay: (day: string) =>
+    invoke<number>("clear_planned_for_day", { day }),
+  planPomodoro: (payload?: {
+    day?: string;
+    startAt?: string;
+    focusMins?: number;
+    breakMins?: number;
+    longBreakMins?: number;
+    rounds?: number;
+  }) =>
+    invoke<PlannedSession[]>("plan_pomodoro", {
+      day: payload?.day ?? todayLocal(),
+      startAt: payload?.startAt ?? null,
+      focusMins: payload?.focusMins ?? null,
+      breakMins: payload?.breakMins ?? null,
+      longBreakMins: payload?.longBreakMins ?? null,
+      rounds: payload?.rounds ?? null,
+    }),
+  planSchedule: (instructions: string, day?: string, startAt?: string) =>
+    invoke<PlannedSession[]>("plan_schedule", {
+      day: day ?? todayLocal(),
+      instructions,
+      startAt: startAt ?? null,
+    }),
+  startFromPlanned: (id: number) =>
+    invoke<FocusSession>("start_from_planned", { id }),
+  nextDuePlanned: () =>
+    invoke<PlannedSession | null>("next_due_planned"),
   listActivityEvents: (day: string, query?: string, limit?: number) =>
     invoke<ActivityEvent[]>("list_activity_events", {
       day,
@@ -806,6 +878,31 @@ export type FocusSession = {
   ended_at: string | null;
   status: string;
   elapsed_secs: number;
+  /** focus | meeting | break */
+  kind: string;
+  planned_secs: number | null;
+  category_override: string | null;
+};
+
+export type SessionKind = "focus" | "meeting" | "break";
+
+export type PlannedSession = {
+  id: number;
+  kind: string;
+  title: string | null;
+  started_at: string;
+  ended_at: string;
+  duration_secs: number;
+  status: string;
+  goal: string | null;
+  client_id: number | null;
+  project_id: number | null;
+  task_id: number | null;
+};
+
+export type TimeSinceBreak = {
+  secs: number;
+  last_break_at: string;
 };
 
 export type ActivityEvent = {

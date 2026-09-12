@@ -68,6 +68,9 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 }
             }
             "quit" => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let _ = state.store.pause_focus();
+                }
                 app.exit(0);
             }
             _ => {}

@@ -45,6 +45,8 @@ struct Inner {
     current: Option<CaptureSample>,
     live: Option<LiveSession>,
     distraction_blocked: Option<String>,
+    /// Consecutive seconds on a distraction-matched app (for threshold).
+    distraction_streak_secs: u64,
 }
 
 pub struct TrackerHandle {
@@ -60,6 +62,7 @@ impl TrackerHandle {
             current: None,
             live: None,
             distraction_blocked: None,
+            distraction_streak_secs: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let inner_clone = Arc::clone(&inner);
@@ -185,19 +188,41 @@ fn tick(store: &Store, inner: &Mutex<Inner>) {
             if let Ok(Some(mode)) =
                 store.is_distraction_blocked(&s.app_name, s.title.as_deref(), s.url.as_deref())
             {
+                let threshold = store
+                    .get_setting("distraction_threshold_secs")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(60);
                 let label = format!("{} ({})", s.app_name, mode);
-                if let Ok(mut g) = inner.lock() {
-                    g.distraction_blocked = Some(label.clone());
+                let should_block = {
+                    let mut g = inner.lock().ok();
+                    if let Some(ref mut g) = g {
+                        g.distraction_streak_secs = g.distraction_streak_secs.saturating_add(1);
+                        if g.distraction_streak_secs >= threshold.max(1) {
+                            g.distraction_blocked = Some(label.clone());
+                            true
+                        } else {
+                            // Still under threshold — keep tracking but clear banner.
+                            g.distraction_blocked = None;
+                            false
+                        }
+                    } else {
+                        true
+                    }
+                };
+                if should_block {
+                    let _ = store.log_privacy_event(
+                        "distraction_block",
+                        Some(&format!("{} blocked via {}", s.app_name, mode)),
+                    );
+                    return None;
                 }
-                let _ = store.log_privacy_event(
-                    "distraction_block",
-                    Some(&format!("{} blocked via {}", s.app_name, mode)),
-                );
-                // soft = skip tracking; hard = skip + keep blocked flag visible
-                return None;
+                return Some(s);
             }
             if let Ok(mut g) = inner.lock() {
                 g.distraction_blocked = None;
+                g.distraction_streak_secs = 0;
             }
             Some(s)
         })

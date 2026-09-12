@@ -11,6 +11,8 @@ export type TimedSpan = {
   sessionId?: number;
   pending?: boolean;
   idle?: boolean;
+  /** Planned (not yet started) overlay */
+  planned?: boolean;
 };
 
 export type LaidOutBlock = TimedSpan & {

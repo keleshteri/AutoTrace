@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { FocusSession, formatElapsed, api } from "../lib/api";
+import { FocusSession, SessionKind, formatElapsed, api } from "../lib/api";
 
 type Props = {
   trackerStatus: string;
   currentApp: string | null;
   distractionBlocked?: string | null;
   focus: FocusSession | null;
+  sinceBreakSecs?: number;
   breakReminder?: string | null;
   onBreak?: boolean;
   breakRemainingSecs?: number;
   onEndBreak?: () => void;
+  startMenuOpen?: boolean;
+  onToggleStartMenu?: () => void;
+  onPickStartKind?: (kind: SessionKind) => void;
   onToggleTracking: () => void;
-  onStartFocus: () => void;
   onEndFocus: () => void;
   onPauseFocus?: () => void;
   onResumeFocus?: () => void;
@@ -74,17 +77,34 @@ function useAmbientPad(playing: boolean, track: TrackId) {
   }, [playing, track]);
 }
 
+function endLabel(focus: FocusSession | null): string {
+  const kind = (focus?.kind || "focus").toLowerCase();
+  if (kind === "meeting") return "End Meeting";
+  if (kind === "break") return "End Break";
+  return "End Focus";
+}
+
+function activeLabel(focus: FocusSession | null): string {
+  const kind = (focus?.kind || "focus").toLowerCase();
+  if (kind === "meeting") return "Meeting time elapsed";
+  if (kind === "break") return "On break";
+  return "Focus time elapsed";
+}
+
 export function StatusBar({
   trackerStatus,
   currentApp,
   distractionBlocked,
   focus,
+  sinceBreakSecs = 0,
   breakReminder,
   onBreak,
   breakRemainingSecs = 0,
   onEndBreak,
+  startMenuOpen,
+  onToggleStartMenu,
+  onPickStartKind,
   onToggleTracking,
-  onStartFocus,
   onEndFocus,
   onPauseFocus,
   onResumeFocus,
@@ -93,8 +113,10 @@ export function StatusBar({
   const trackingOn = trackerStatus === "running";
   const focusing = focus?.status === "active";
   const pausedFocus = focus?.status === "paused";
+  const kind = (focus?.kind || "focus").toLowerCase();
   const [musicOn, setMusicOn] = useState(false);
   const [track, setTrack] = useState<TrackId>("space");
+  const menuRef = useRef<HTMLDivElement>(null);
   useAmbientPad(musicOn, track);
 
   useEffect(() => {
@@ -103,12 +125,30 @@ export function StatusBar({
     });
   }, []);
 
+  useEffect(() => {
+    if (!startMenuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) {
+        onToggleStartMenu?.();
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [startMenuOpen, onToggleStartMenu]);
+
   function cycleTrack() {
     const order: TrackId[] = ["space", "rain", "focus"];
     const next = order[(order.indexOf(track) + 1) % order.length];
     setTrack(next);
     void api.setFeatureFlag("ambient_track", next);
   }
+
+  const displaySecs =
+    onBreak || kind === "break"
+      ? breakRemainingSecs
+      : focusing || pausedFocus
+        ? (focus?.elapsed_secs ?? 0)
+        : sinceBreakSecs;
 
   return (
     <footer className="status-bar">
@@ -122,43 +162,32 @@ export function StatusBar({
         >
           ⏻
         </button>
-        <div className="status-meta" onClick={onOpenTimer} role="presentation">
-          {onBreak ? (
-            <>
-              <span className="focus-ring-mini break" />
-              <div>
-                <div className="status-time">{formatElapsed(breakRemainingSecs)}</div>
-                <div className="status-label">On break</div>
-              </div>
-            </>
-          ) : focusing || pausedFocus ? (
-            <>
-              <span className="focus-ring-mini" />
-              <div>
-                <div className="status-time">
-                  {formatElapsed(focus?.elapsed_secs ?? 0)}
-                  {pausedFocus ? " (paused)" : ""}
-                </div>
-                <div className="status-label">
-                  {breakReminder ?? "Focus time elapsed"}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div>
-              <div className="status-time">
-                {trackingOn ? "Tracking" : "Paused"}
-              </div>
-              <div className="status-label">
-                {distractionBlocked
-                  ? `Blocked: ${distractionBlocked}`
-                  : (currentApp ?? "Tracking status")}
-              </div>
+        <div
+          className="status-meta"
+          onClick={onOpenTimer}
+          role="presentation"
+          title={currentApp ?? undefined}
+        >
+          <span className={`focus-ring-mini${onBreak || kind === "break" ? " break" : ""}`} />
+          <div>
+            <div className="status-time">
+              {formatElapsed(displaySecs)}
+              {pausedFocus ? " (paused)" : ""}
             </div>
-          )}
+            <div className="status-label">
+              {onBreak || kind === "break"
+                ? "On break"
+                : focusing || pausedFocus
+                  ? (breakReminder ?? activeLabel(focus))
+                  : (breakReminder ??
+                    (distractionBlocked
+                      ? `Blocked: ${distractionBlocked}`
+                      : "Time since last break"))}
+            </div>
+          </div>
         </div>
-        {onBreak ? (
-          <button type="button" className="end-focus-btn" onClick={onEndBreak}>
+        {onBreak || kind === "break" ? (
+          <button type="button" className="end-focus-btn" onClick={onEndBreak ?? onEndFocus}>
             End Break
           </button>
         ) : focusing ? (
@@ -169,7 +198,7 @@ export function StatusBar({
               </button>
             )}
             <button type="button" className="end-focus-btn" onClick={onEndFocus}>
-              End Focus
+              {endLabel(focus)}
             </button>
           </>
         ) : pausedFocus ? (
@@ -180,13 +209,32 @@ export function StatusBar({
               </button>
             )}
             <button type="button" className="end-focus-btn" onClick={onEndFocus}>
-              End Focus
+              {endLabel(focus)}
             </button>
           </>
         ) : (
-          <button type="button" className="end-focus-btn" onClick={onStartFocus}>
-            Start Focus
-          </button>
+          <div className="status-start-wrap" ref={menuRef}>
+            <button
+              type="button"
+              className="end-focus-btn"
+              onClick={onToggleStartMenu}
+            >
+              Start ▾
+            </button>
+            {startMenuOpen && (
+              <div className="timer-start-menu status-start-menu" role="menu">
+                <button type="button" role="menuitem" onClick={() => onPickStartKind?.("focus")}>
+                  Start Focus
+                </button>
+                <button type="button" role="menuitem" onClick={() => onPickStartKind?.("meeting")}>
+                  Start Meeting
+                </button>
+                <button type="button" role="menuitem" onClick={() => onPickStartKind?.("break")}>
+                  Start Break
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -209,14 +257,8 @@ export function StatusBar({
           >
             {musicOn ? "❚❚" : "▶"}
           </button>
-          <button
-            type="button"
-            className="ambient-btn"
-            aria-label="Next track"
-            title="Cycle ambient track"
-            onClick={cycleTrack}
-          >
-            ♪
+          <button type="button" className="ambient-btn" aria-label="Next track" onClick={cycleTrack}>
+            ⏭
           </button>
         </div>
       </div>

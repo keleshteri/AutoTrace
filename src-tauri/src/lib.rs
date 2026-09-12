@@ -77,11 +77,25 @@ pub fn run() {
             commands::set_integration_mapping,
             commands::local_api_status,
             commands::get_active_focus,
+            commands::get_time_since_last_break,
+            commands::mark_break_ended,
             commands::start_focus,
+            commands::extend_focus,
+            commands::suggest_planned_from_calendar,
+            commands::maybe_auto_detect_sessions,
             commands::pause_focus,
             commands::resume_focus,
             commands::end_focus,
             commands::list_focus_for_day,
+            commands::list_planned_for_day,
+            commands::create_planned_session,
+            commands::set_planned_status,
+            commands::delete_planned_session,
+            commands::clear_planned_for_day,
+            commands::plan_pomodoro,
+            commands::plan_schedule,
+            commands::start_from_planned,
+            commands::next_due_planned,
             commands::list_activity_events,
             commands::list_activity_events_in_range,
             commands::delete_activity_event,
@@ -139,6 +153,8 @@ pub fn run() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app_handle.try_state::<AppState>() {
+                    // Freeze focus before exit so reopen never counts downtime.
+                    let _ = state.store.pause_focus();
                     state.tracker.stop();
                 }
             }

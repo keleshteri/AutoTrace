@@ -15,6 +15,8 @@ import { TimerView } from "./components/TimerView";
 import { ActivityView } from "./components/ActivityView";
 import { StatusBar } from "./components/StatusBar";
 import { BreakBanner, BreakCoach } from "./components/BreakCoach";
+import { StartSessionModal } from "./components/StartSessionModal";
+import { PlannedDuePrompt } from "./components/PlannedDuePrompt";
 import { WorkspaceSettingsView } from "./components/WorkspaceSettingsView";
 import {
   api,
@@ -22,6 +24,7 @@ import {
   FocusDigest,
   FocusSession,
   Hierarchy,
+  PlannedSession,
   SessionRow,
   Workspace,
   todayLocal,
@@ -38,6 +41,9 @@ function App() {
   const [focusDigest, setFocusDigest] = useState<FocusDigest | null>(null);
   const [focus, setFocus] = useState<FocusSession | null>(null);
   const [focusTick, setFocusTick] = useState(0);
+  const [sinceBreakSecs, setSinceBreakSecs] = useState(0);
+  const [sinceBreakTick, setSinceBreakTick] = useState(0);
+  const [focusDefaultMins, setFocusDefaultMins] = useState(50);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [showManual, setShowManual] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,19 +54,32 @@ function App() {
   const [breakLen, setBreakLen] = useState(5);
   const [breakSnooze, setBreakSnooze] = useState(5);
   const [snoozeUntil, setSnoozeUntil] = useState(0);
-  const [breakUntil, setBreakUntil] = useState(0);
-  const [breakTick, setBreakTick] = useState(0);
   const [lastCoachBucket, setLastCoachBucket] = useState(-1);
+  const [statusStartMenu, setStatusStartMenu] = useState(false);
+  const [statusModalKind, setStatusModalKind] = useState<"focus" | "meeting" | "break" | null>(
+    null,
+  );
+  const [duePlanned, setDuePlanned] = useState<PlannedSession | null>(null);
+  const [plannedAutoStart, setPlannedAutoStart] = useState(false);
+  const [dismissedDueId, setDismissedDueId] = useState<number | null>(null);
+  const [breakFullscreen, setBreakFullscreen] = useState(false);
+  const [urgeUntil, setUrgeUntil] = useState(0);
 
   const refreshStatus = useCallback(async () => {
     try {
-      const [s, f] = await Promise.all([
+      const [s, f, since, defaultMins] = await Promise.all([
         api.getAppStatus(),
         api.getActiveFocus(),
+        api.getTimeSinceLastBreak(),
+        api.getFeatureFlag("focus_default_mins"),
       ]);
       setStatus(s);
       setFocus(f);
       setFocusTick(0);
+      setSinceBreakSecs(since.secs);
+      setSinceBreakTick(0);
+      const mins = Number(defaultMins || "50");
+      if (Number.isFinite(mins) && mins > 0) setFocusDefaultMins(mins);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -115,35 +134,56 @@ function App() {
   }, [focus?.id, focus?.status]);
 
   useEffect(() => {
-    if (breakUntil <= Date.now()) return;
-    const id = window.setInterval(() => setBreakTick((t) => t + 1), 1000);
+    // Tick "time since last break" only when no intentional session is open.
+    if (focus?.status === "active" || focus?.status === "paused") return;
+    const id = window.setInterval(() => setSinceBreakTick((t) => t + 1), 1000);
     return () => window.clearInterval(id);
-  }, [breakUntil]);
+  }, [focus?.status]);
 
   void focusTick;
-  void breakTick;
+  void sinceBreakTick;
   const liveFocus = focus
     ? {
         ...focus,
+        kind: focus.kind || "focus",
         elapsed_secs:
           focus.status === "active"
             ? focus.elapsed_secs + focusTick
             : focus.elapsed_secs,
       }
     : null;
+  const liveSinceBreak = sinceBreakSecs + sinceBreakTick;
 
-  const onBreak = breakUntil > Date.now();
-  const breakRemaining = onBreak
-    ? Math.max(0, Math.floor((breakUntil - Date.now()) / 1000))
-    : 0;
+  const sessionKind = (liveFocus?.kind || "focus").toLowerCase();
+  const onBreak =
+    !!liveFocus &&
+    sessionKind === "break" &&
+    (liveFocus.status === "active" || liveFocus.status === "paused");
+  const breakRemaining =
+    onBreak && liveFocus?.planned_secs
+      ? Math.max(0, liveFocus.planned_secs - liveFocus.elapsed_secs)
+      : 0;
 
+  // Auto-end break when countdown hits zero.
   useEffect(() => {
-    if (!onBreak) return;
-    if (breakRemaining <= 0) {
-      setBreakUntil(0);
-      setBreakReminder(null);
-    }
-  }, [onBreak, breakRemaining]);
+    if (!onBreak || liveFocus?.status !== "active") return;
+    if (!liveFocus.planned_secs || breakRemaining > 0) return;
+    void api
+      .endFocus()
+      .then(() => {
+        setFocusTick(0);
+        setSnoozeUntil(Date.now() + 60_000);
+        return Promise.all([refreshStatus(), refreshDay()]);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [
+    onBreak,
+    breakRemaining,
+    liveFocus?.status,
+    liveFocus?.planned_secs,
+    refreshStatus,
+    refreshDay,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -164,13 +204,10 @@ function App() {
           return;
         }
 
-        const elapsed = liveFocus?.elapsed_secs ?? 0;
-        if (
-          liveFocus &&
-          (liveFocus.status === "active" || liveFocus.status === "paused")
-        ) {
+        const elapsed = liveSinceBreak;
+        if (elapsed > 0 && every > 0) {
           const mins = Math.floor(elapsed / 60);
-          if (mins > 0 && every > 0 && mins >= every) {
+          if (mins >= every) {
             const bucket = Math.floor(mins / every);
             setBreakReminder(`Break time — take ${len} min`);
             if (bucket !== lastCoachBucket) {
@@ -189,24 +226,19 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [
-    liveFocus?.elapsed_secs,
-    liveFocus?.status,
-    liveFocus?.id,
-    onBreak,
-    snoozeUntil,
-    lastCoachBucket,
-  ]);
+  }, [liveSinceBreak, onBreak, snoozeUntil, lastCoachBucket]);
 
   async function startBreak() {
     setBreakCoachOpen(false);
-    setBreakUntil(Date.now() + breakLen * 60_000);
-    setBreakReminder(`On break (${breakLen} min)`);
     try {
-      if (focus?.status === "active") {
-        await api.pauseFocus();
-        await refreshStatus();
-      }
+      const max = Number((await api.getFeatureFlag("break_max_mins")) || "30");
+      const mins = Math.min(breakLen, Number.isFinite(max) && max > 0 ? max : breakLen);
+      await api.startFocus({ kind: "break", durationMins: mins });
+      setFocusTick(0);
+      setLastCoachBucket(-1);
+      setBreakFullscreen((await api.getFeatureFlag("break_fullscreen")) === "1");
+      await refreshStatus();
+      setNav("timer");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -219,10 +251,92 @@ function App() {
   }
 
   function endBreak() {
-    setBreakUntil(0);
     setBreakReminder(null);
     setSnoozeUntil(Date.now() + 60_000);
+    void api
+      .endFocus()
+      .then(() => Promise.all([refreshStatus(), refreshDay()]))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }
+
+  // Planned session auto-start / due prompt (Rize-style).
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const [auto, due, fullscreen] = await Promise.all([
+          api.getFeatureFlag("planned_auto_start"),
+          api.nextDuePlanned(),
+          api.getFeatureFlag("break_fullscreen"),
+        ]);
+        if (cancelled) return;
+        const autoOn = auto === "1";
+        setPlannedAutoStart(autoOn);
+        setBreakFullscreen(fullscreen === "1");
+        if (!due || due.id === dismissedDueId) {
+          if (!due) setDuePlanned(null);
+          return;
+        }
+        // Only prompt when no live session is running.
+        if (focus?.status === "active" || focus?.status === "paused") {
+          setDuePlanned(null);
+          return;
+        }
+        if (autoOn) {
+          await api.startFromPlanned(due.id);
+          setDuePlanned(null);
+          setDismissedDueId(due.id);
+          setFocusTick(0);
+          await refreshStatus();
+          return;
+        }
+        setDuePlanned(due);
+      } catch {
+        /* ignore */
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [focus?.status, dismissedDueId, refreshStatus]);
+
+  // Optional auto Focus / Break detection.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (focus?.status === "active" || focus?.status === "paused") return;
+      void api
+        .maybeAutoDetectSessions()
+        .then((s) => {
+          if (s) {
+            setFocusTick(0);
+            return refreshStatus();
+          }
+        })
+        .catch(() => undefined);
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [focus?.status, refreshStatus]);
+
+  // Urge surfing lock when distraction blocker fires.
+  useEffect(() => {
+    const blocked = status?.tracker.distraction_blocked;
+    if (!blocked) return;
+    void api.getFeatureFlag("urge_surfing").then((v) => {
+      if (v === "1") setUrgeUntil(Date.now() + 10_000);
+    });
+  }, [status?.tracker.distraction_blocked]);
+
+  const [, setUrgeTick] = useState(0);
+  const urgeLocked = urgeUntil > Date.now();
+
+  useEffect(() => {
+    if (urgeUntil <= Date.now()) return;
+    const id = window.setInterval(() => setUrgeTick((t) => t + 1), 250);
+    return () => window.clearInterval(id);
+  }, [urgeUntil]);
 
   function selectSession(session: SessionRow, additive: boolean) {
     setSelectedIds((prev) => {
@@ -346,6 +460,34 @@ function App() {
           {onBreak && (
             <BreakBanner remainingSecs={breakRemaining} onEnd={endBreak} />
           )}
+          {onBreak && breakFullscreen && (
+            <div className="break-fullscreen" role="dialog" aria-label="Break">
+              <div className="break-fullscreen-card">
+                <p className="kicker">On break</p>
+                <div className="timer-time" style={{ fontSize: 48 }}>
+                  {formatElapsedSafe(breakRemaining)}
+                </div>
+                <p className="muted">Step away from the screen. Stretch or walk.</p>
+                <button type="button" className="btn primary-pill" onClick={endBreak}>
+                  End Break
+                </button>
+              </div>
+            </div>
+          )}
+          {urgeLocked && status?.tracker.distraction_blocked && (
+            <div className="urge-surf" role="alertdialog" aria-label="Urge surfing">
+              <div className="urge-surf-card">
+                <h3>Stay with the urge</h3>
+                <p className="muted">
+                  Blocked: {status.tracker.distraction_blocked}. Wait a few seconds before
+                  continuing.
+                </p>
+                <p className="timer-time" style={{ fontSize: 28 }}>
+                  {formatElapsedSafe(Math.max(0, Math.ceil((urgeUntil - Date.now()) / 1000)))}
+                </p>
+              </div>
+            </div>
+          )}
           <BreakCoach
             visible={breakCoachOpen && !onBreak}
             everyMins={breakEvery}
@@ -356,10 +498,46 @@ function App() {
             onDismiss={() => setBreakCoachOpen(false)}
           />
 
+          {duePlanned && !onBreak && !(liveFocus?.status === "active") && (
+            <PlannedDuePrompt
+              session={duePlanned}
+              autoStart={plannedAutoStart}
+              onStartNow={() => {
+                const id = duePlanned.id;
+                void api
+                  .startFromPlanned(id)
+                  .then(() => {
+                    setDuePlanned(null);
+                    setDismissedDueId(id);
+                    setFocusTick(0);
+                    setNav("timer");
+                    return refreshStatus();
+                  })
+                  .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+              }}
+              onSkip={() => {
+                const id = duePlanned.id;
+                void api
+                  .setPlannedStatus(id, "skipped")
+                  .then(() => {
+                    setDuePlanned(null);
+                    setDismissedDueId(id);
+                  })
+                  .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+              }}
+              onDismiss={() => {
+                setDismissedDueId(duePlanned.id);
+                setDuePlanned(null);
+              }}
+            />
+          )}
+
           {nav === "timer" && (
             <TimerView
               focus={liveFocus}
               hierarchy={hierarchy}
+              sinceBreakSecs={liveSinceBreak}
+              focusDefaultMins={focusDefaultMins}
               onChanged={() => {
                 setFocusTick(0);
                 void refreshStatus();
@@ -519,30 +697,25 @@ function App() {
         trackerStatus={status?.tracker.status ?? "…"}
         currentApp={status?.tracker.current_app ?? null}
         distractionBlocked={status?.tracker.distraction_blocked ?? null}
-        breakReminder={onBreak ? `Break · ${breakRemaining}s` : breakReminder}
+        breakReminder={onBreak ? `Break · ${formatElapsedSafe(breakRemaining)}` : breakReminder}
         focus={liveFocus}
+        sinceBreakSecs={liveSinceBreak}
         onBreak={onBreak}
         breakRemainingSecs={breakRemaining}
         onEndBreak={endBreak}
+        startMenuOpen={statusStartMenu}
+        onToggleStartMenu={() => setStatusStartMenu((v) => !v)}
+        onPickStartKind={(kind) => {
+          setStatusStartMenu(false);
+          setStatusModalKind(kind);
+          setNav("timer");
+        }}
         onToggleTracking={() => {
           if (status?.tracker.status === "running") {
             void api.pauseTracking().then(refreshStatus);
           } else {
             void api.resumeTracking().then(refreshStatus);
           }
-        }}
-        onStartFocus={() => {
-          void api
-            .startFocus()
-            .then(() => {
-              setFocusTick(0);
-              setLastCoachBucket(-1);
-              setNav("timer");
-              return refreshStatus();
-            })
-            .catch((e) =>
-              setError(e instanceof Error ? e.message : String(e)),
-            );
         }}
         onPauseFocus={() => {
           void api
@@ -576,8 +749,30 @@ function App() {
         }}
         onOpenTimer={() => setNav("timer")}
       />
+
+      {statusModalKind && (
+        <StartSessionModal
+          kind={statusModalKind}
+          hierarchy={hierarchy}
+          onClose={() => setStatusModalKind(null)}
+          onStarted={() => {
+            setFocusTick(0);
+            setLastCoachBucket(-1);
+            void refreshStatus();
+            void refreshDay();
+          }}
+          onError={setError}
+        />
+      )}
     </div>
   );
+}
+
+function formatElapsedSafe(secs: number): string {
+  const s = Math.max(0, Math.floor(secs));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
 }
 
 function ManualEntryModal({

@@ -226,6 +226,35 @@ pub struct FocusSession {
     pub ended_at: Option<String>,
     pub status: String,
     pub elapsed_secs: i64,
+    /// focus | meeting | break
+    pub kind: String,
+    /// Optional planned duration (countdown target), especially for breaks.
+    pub planned_secs: Option<i64>,
+    /// Optional category override applied when the session is written to the calendar.
+    pub category_override: Option<String>,
+}
+
+/// Rory-style default timer clock when no Focus/Meeting/Break session is active.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeSinceBreak {
+    pub secs: i64,
+    pub last_break_at: String,
+}
+
+/// Future Focus / Meeting / Break block on the Timer timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlannedSession {
+    pub id: i64,
+    pub kind: String,
+    pub title: Option<String>,
+    pub started_at: String,
+    pub ended_at: String,
+    pub duration_secs: i64,
+    pub status: String,
+    pub goal: Option<String>,
+    pub client_id: Option<i64>,
+    pub project_id: Option<i64>,
+    pub task_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

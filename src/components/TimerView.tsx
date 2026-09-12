@@ -1,66 +1,137 @@
-import { FormEvent, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   FocusSession,
   Hierarchy,
+  PlannedSession,
+  SessionKind,
   formatElapsed,
+  todayLocal,
 } from "../lib/api";
+import { StartSessionModal } from "./StartSessionModal";
+import { PlanScheduleModal } from "./PlanScheduleModal";
 
 type Props = {
   focus: FocusSession | null;
   hierarchy: Hierarchy | null;
+  sinceBreakSecs?: number;
+  focusDefaultMins?: number;
   onChanged: () => void;
   onError: (msg: string | null) => void;
   onOpenActivity: () => void;
 };
 
+function sessionCaption(focus: FocusSession | null, sinceBreak: boolean): string {
+  if (!focus) return sinceBreak ? "Time since last break" : "Ready";
+  const kind = (focus.kind || "focus").toLowerCase();
+  if (focus.status === "paused") {
+    if (kind === "meeting") return "Meeting paused";
+    if (kind === "break") return "Break paused";
+    return "Focus paused";
+  }
+  if (kind === "meeting") return "Meeting time elapsed";
+  if (kind === "break") return "Break remaining";
+  return "Focus time elapsed";
+}
+
+function displaySecs(focus: FocusSession | null, sinceBreakSecs: number): number {
+  if (!focus) return sinceBreakSecs;
+  const planned = focus.planned_secs;
+  const elapsed = focus.elapsed_secs ?? 0;
+  if ((focus.kind || "").toLowerCase() === "break" && planned != null && planned > 0) {
+    return Math.max(0, planned - elapsed);
+  }
+  return elapsed;
+}
+
+function fmtClock(iso: string): string {
+  const t = iso.includes("T") ? iso.slice(11, 16) : iso;
+  const [hh, mm] = t.split(":").map(Number);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return t;
+  const am = hh < 12;
+  const h12 = hh % 12 || 12;
+  return `${h12}:${String(mm).padStart(2, "0")} ${am ? "AM" : "PM"}`;
+}
+
+function planLabel(s: PlannedSession): string {
+  if (s.title?.trim()) return s.title;
+  const k = (s.kind || "focus").toLowerCase();
+  if (k === "meeting") return "Meeting";
+  if (k === "break") return s.title?.includes("Long") ? "Long Break" : "Break";
+  return "Focus Session";
+}
+
 export function TimerView({
   focus,
   hierarchy,
+  sinceBreakSecs = 0,
+  focusDefaultMins = 50,
   onChanged,
   onError,
   onOpenActivity,
 }: Props) {
-  const [goal, setGoal] = useState("");
-  const [projectId, setProjectId] = useState<number | "">("");
-  const [panel, setPanel] = useState<"session" | "timeline">("session");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [boltOpen, setBoltOpen] = useState(false);
+  const [modalKind, setModalKind] = useState<SessionKind | null>(null);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planned, setPlanned] = useState<PlannedSession[]>([]);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const boltRef = useRef<HTMLDivElement>(null);
+  const day = todayLocal();
 
-  // Parent App already keeps elapsed_secs live while status === active.
-  const elapsed = focus?.elapsed_secs ?? 0;
+  const focusing =
+    focus?.status === "active" || focus?.status === "paused";
+  const kind = (focus?.kind || "focus").toLowerCase();
+  const isBreak = kind === "break";
+  const shown = displaySecs(focus, sinceBreakSecs);
 
-  // Ring progress against a soft 50-minute focus block.
-  const target = 50 * 60;
-  const pct = Math.min(100, (elapsed / target) * 100);
+  const targetSecs =
+    focus?.planned_secs && focus.planned_secs > 0
+      ? focus.planned_secs
+      : Math.max(1, focusDefaultMins) * 60;
+  const progressBase =
+    isBreak && focus?.planned_secs
+      ? focus.planned_secs - shown
+      : shown;
+  const pct = Math.min(100, (progressBase / targetSecs) * 100);
   const r = 108;
   const c = 2 * Math.PI * r;
+  const ringActive = focusing ? focus?.status === "active" : true;
   const dash = c * (1 - pct / 100);
 
-  async function start(e: FormEvent) {
-    e.preventDefault();
+  const refreshPlanned = useCallback(async () => {
     try {
-      let clientId: number | null = null;
-      const pid = projectId === "" ? null : projectId;
-      if (pid != null) {
-        for (const cl of hierarchy?.clients ?? []) {
-          if (cl.projects.some((p) => p.id === pid)) clientId = cl.id;
-        }
-      }
-      await api.startFocus({
-        goal: goal.trim() || undefined,
-        clientId,
-        projectId: pid,
-      });
-      onError(null);
-      onChanged();
+      setPlanned(await api.listPlannedForDay(day));
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     }
-  }
+  }, [day, onError]);
+
+  useEffect(() => {
+    void refreshPlanned();
+    const id = window.setInterval(() => void refreshPlanned(), 15_000);
+    return () => window.clearInterval(id);
+  }, [refreshPlanned]);
+
+  useEffect(() => {
+    if (!menuOpen && !boltOpen) return;
+    function onDoc(e: MouseEvent) {
+      const t = e.target as Node;
+      if (menuOpen && !menuRef.current?.contains(t)) setMenuOpen(false);
+      if (boltOpen && !boltRef.current?.contains(t)) setBoltOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen, boltOpen]);
+
+  const upcoming = planned.filter((p) => p.status === "planned");
+  const nextUp = upcoming[0] ?? null;
 
   async function end() {
     try {
       await api.endFocus();
       onChanged();
+      await refreshPlanned();
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     }
@@ -84,10 +155,62 @@ export function TimerView({
     }
   }
 
-  const projects =
-    hierarchy?.clients.flatMap((c) =>
-      c.projects.map((p) => ({ id: p.id, label: `${c.name} / ${p.name}` })),
-    ) ?? [];
+  async function extend() {
+    try {
+      await api.extendFocus();
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function openModal(k: SessionKind) {
+    setMenuOpen(false);
+    setModalKind(k);
+  }
+
+  async function runPomodoro() {
+    setBoltOpen(false);
+    try {
+      await api.planPomodoro({ day });
+      onError(null);
+      await refreshPlanned();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function clearSchedule() {
+    setBoltOpen(false);
+    try {
+      await api.clearPlannedForDay(day);
+      await refreshPlanned();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function startPlanned(id: number) {
+    try {
+      await api.startFromPlanned(id);
+      onChanged();
+      await refreshPlanned();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function skipPlanned(id: number) {
+    try {
+      await api.setPlannedStatus(id, "skipped");
+      await refreshPlanned();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const endLabel =
+    kind === "meeting" ? "End Meeting" : kind === "break" ? "End Break" : "End Focus";
 
   return (
     <div className="timer-layout">
@@ -99,21 +222,17 @@ export function TimerView({
               cx="120"
               cy="120"
               r={r}
-              className="timer-ring-fg"
+              className={`timer-ring-fg${isBreak ? " break" : kind === "meeting" ? " meeting" : ""}`}
               style={{
                 strokeDasharray: c,
-                strokeDashoffset: focus?.status === "active" ? dash : c,
+                strokeDashoffset: ringActive ? dash : c,
               }}
             />
           </svg>
           <div className="timer-readout">
-            <div className="timer-time">{formatElapsed(elapsed)}</div>
+            <div className="timer-time">{formatElapsed(shown)}</div>
             <div className="timer-caption">
-              {focus?.status === "active"
-                ? "Focus time elapsed"
-                : focus?.status === "paused"
-                  ? "Focus paused"
-                  : "Ready to focus"}
+              {sessionCaption(focus, !focusing)}
             </div>
           </div>
         </div>
@@ -132,26 +251,26 @@ export function TimerView({
               <button
                 type="button"
                 className="timer-ctrl"
-                title="Pause Focus"
+                title="Pause"
                 onClick={() => void pause()}
               >
                 ❚❚
               </button>
               <button
                 type="button"
-                className="timer-ctrl stop"
-                title="End Focus"
-                onClick={() => void end()}
+                className="timer-ctrl"
+                title="Extend session"
+                onClick={() => void extend()}
               >
-                ■
+                +
               </button>
               <button
                 type="button"
-                className="timer-ctrl"
-                title="Add goal note"
-                onClick={() => setPanel("session")}
+                className="timer-ctrl stop"
+                title={endLabel}
+                onClick={() => void end()}
               >
-                +
+                ■
               </button>
             </>
           ) : focus?.status === "paused" ? (
@@ -159,110 +278,199 @@ export function TimerView({
               <button
                 type="button"
                 className="timer-ctrl"
-                title="Resume Focus"
+                title="Resume"
                 onClick={() => void resume()}
               >
                 ▶
               </button>
               <button
                 type="button"
+                className="timer-ctrl"
+                title="Extend session"
+                onClick={() => void extend()}
+              >
+                +
+              </button>
+              <button
+                type="button"
                 className="timer-ctrl stop"
-                title="End Focus"
+                title={endLabel}
                 onClick={() => void end()}
               >
                 ■
               </button>
             </>
           ) : (
-            <button type="button" className="btn primary-pill" onClick={() => void start({ preventDefault() {} } as FormEvent)}>
-              Start Focus
-            </button>
+            <>
+              <div className="timer-start-wrap" ref={menuRef}>
+                <button
+                  type="button"
+                  className="timer-ctrl play"
+                  title="Start a session"
+                  onClick={() => {
+                    setBoltOpen(false);
+                    setMenuOpen((v) => !v);
+                  }}
+                >
+                  ▶
+                </button>
+                {menuOpen && (
+                  <div className="timer-start-menu" role="menu">
+                    <button type="button" role="menuitem" onClick={() => openModal("focus")}>
+                      Start Focus
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => openModal("meeting")}>
+                      Start Meeting
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => openModal("break")}>
+                      Start Break
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="timer-start-wrap" ref={boltRef}>
+                <button
+                  type="button"
+                  className="timer-ctrl"
+                  title="Schedule planned sessions"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setBoltOpen((v) => !v);
+                  }}
+                >
+                  ⚡
+                </button>
+                {boltOpen && (
+                  <div className="timer-start-menu bolt-menu" role="menu">
+                    <div className="bolt-menu-head">Classic Pomodoro Timer</div>
+                    <p className="muted bolt-menu-desc">
+                      25-min focus sessions followed by 5-min breaks with a 15-min break after four
+                      sessions.
+                    </p>
+                    <button type="button" role="menuitem" onClick={() => void runPomodoro()}>
+                      Classic Pomodoro
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setBoltOpen(false);
+                        setPlanOpen(true);
+                      }}
+                    >
+                      Plan Schedule
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => void refreshPlanned()}>
+                      Refresh Schedule
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => void clearSchedule()}>
+                      Clear Schedule
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
+
+        {nextUp && !focusing && (
+          <div className={`next-session-card kind-${(nextUp.kind || "focus").toLowerCase()}`}>
+            <div>
+              <div className="next-session-title">Next: {planLabel(nextUp)}</div>
+              <div className="next-session-meta">
+                {fmtClock(nextUp.started_at)} – {fmtClock(nextUp.ended_at)} ·{" "}
+                {Math.round(nextUp.duration_secs / 60)} min
+              </div>
+            </div>
+            <div className="next-session-actions">
+              <button
+                type="button"
+                className="timer-ctrl play"
+                title="Start now"
+                onClick={() => void startPlanned(nextUp.id)}
+              >
+                ▶
+              </button>
+              <button
+                type="button"
+                className="timer-ctrl"
+                title="Skip"
+                onClick={() => void skipPlanned(nextUp.id)}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <aside className="timer-side">
         <div className="segment" style={{ marginBottom: 12 }}>
-          <button
-            type="button"
-            className={panel === "session" ? "active" : undefined}
-            onClick={() => setPanel("session")}
-          >
-            Current Session
-          </button>
-          <button
-            type="button"
-            className={panel === "timeline" ? "active" : undefined}
-            onClick={() => setPanel("timeline")}
-          >
+          <button type="button" className="active">
             Timeline
+          </button>
+          <button type="button" onClick={onOpenActivity}>
+            Sessions
           </button>
         </div>
 
-        {panel === "session" && (
-          <form className="card" onSubmit={(e) => void start(e)}>
-            <p className="muted" style={{ marginTop: 0 }}>
-              Writing down a goal for your session helps you retain focus.
-            </p>
-            <label className="muted">
-              Goal
-              <textarea
-                rows={3}
-                value={goal}
-                onChange={(e) => setGoal(e.target.value)}
-                placeholder="Enter a goal for this session…"
-                style={{ width: "100%", marginTop: 6, resize: "vertical" }}
-                disabled={focus?.status === "active"}
-              />
-            </label>
-            <label className="muted" style={{ display: "block", marginTop: 10 }}>
-              Project
-              <select
-                value={projectId}
-                onChange={(e) =>
-                  setProjectId(e.target.value ? Number(e.target.value) : "")
-                }
-                disabled={focus?.status === "active"}
-                style={{ width: "100%", marginTop: 6 }}
+        <div className="planned-timeline">
+          {planned.length === 0 ? (
+            <div className="card">
+              <p className="kicker">No planned sessions</p>
+              <p className="muted">
+                Use ⚡ to add a Classic Pomodoro or Plan Schedule for today.
+              </p>
+            </div>
+          ) : (
+            planned.map((p) => (
+              <div
+                key={p.id}
+                className={`planned-block kind-${(p.kind || "focus").toLowerCase()} status-${p.status}`}
               >
-                <option value="">None</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {focus?.status === "active" ? (
-              <button
-                type="button"
-                className="btn"
-                style={{ marginTop: 12, width: "100%" }}
-                onClick={() => void end()}
-              >
-                End Focus
-              </button>
-            ) : (
-              <button type="submit" className="btn" style={{ marginTop: 12, width: "100%" }}>
-                Start Focus
-              </button>
-            )}
-          </form>
-        )}
-
-        {panel === "timeline" && (
-          <div className="card">
-            <p className="kicker">Today</p>
-            <p className="muted">
-              Focus blocks also appear on Calendar after you end a session.
-              Open Activity for the live app event stream.
-            </p>
-            <button type="button" className="btn" style={{ marginTop: 10 }} onClick={onOpenActivity}>
-              Open Activity
-            </button>
-          </div>
-        )}
+                <div className="planned-block-time">
+                  {fmtClock(p.started_at)} – {fmtClock(p.ended_at)}
+                </div>
+                <div className="planned-block-title">{planLabel(p)}</div>
+                <div className="planned-block-meta">
+                  {Math.round(p.duration_secs / 60)} min · {p.status}
+                </div>
+                {p.status === "planned" && (
+                  <div className="planned-block-actions">
+                    <button type="button" className="btn" onClick={() => void startPlanned(p.id)}>
+                      Start
+                    </button>
+                    <button type="button" className="btn" onClick={() => void skipPlanned(p.id)}>
+                      Skip
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </aside>
+
+      {modalKind && (
+        <StartSessionModal
+          kind={modalKind}
+          hierarchy={hierarchy}
+          onClose={() => setModalKind(null)}
+          onStarted={() => {
+            onChanged();
+            void refreshPlanned();
+          }}
+          onError={onError}
+        />
+      )}
+      {planOpen && (
+        <PlanScheduleModal
+          day={day}
+          onClose={() => setPlanOpen(false)}
+          onPlanned={() => void refreshPlanned()}
+          onError={onError}
+        />
+      )}
     </div>
   );
 }

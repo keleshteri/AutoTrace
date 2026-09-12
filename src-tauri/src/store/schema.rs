@@ -436,7 +436,61 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('focus_default_mins', '50');
 UPDATE settings SET value = '10' WHERE key = 'schema_version';
 "#;
 
-pub const SCHEMA_VERSION: i64 = 10;
+const MIGRATION_V11: &str = r#"
+ALTER TABLE focus_sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'focus';
+ALTER TABLE focus_sessions ADD COLUMN planned_secs INTEGER;
+
+UPDATE focus_sessions SET kind = 'focus' WHERE kind IS NULL OR kind = '';
+
+INSERT OR IGNORE INTO settings (key, value) VALUES ('meeting_default_mins', '30');
+
+UPDATE settings SET value = '11' WHERE key = 'schema_version';
+"#;
+
+const MIGRATION_V12: &str = r#"
+CREATE TABLE IF NOT EXISTS planned_sessions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind           TEXT NOT NULL DEFAULT 'focus',
+    title          TEXT,
+    started_at     TEXT NOT NULL,
+    ended_at       TEXT NOT NULL,
+    duration_secs  INTEGER NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'planned',
+    goal           TEXT,
+    client_id      INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+    project_id     INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    task_id        INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_planned_sessions_started ON planned_sessions(started_at);
+CREATE INDEX IF NOT EXISTS idx_planned_sessions_status ON planned_sessions(status);
+
+INSERT OR IGNORE INTO settings (key, value) VALUES ('planned_auto_start', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('pomodoro_focus_mins', '25');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('pomodoro_break_mins', '5');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('pomodoro_long_break_mins', '15');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('pomodoro_rounds', '4');
+
+UPDATE settings SET value = '12' WHERE key = 'schema_version';
+"#;
+
+const MIGRATION_V13: &str = r#"
+ALTER TABLE focus_sessions ADD COLUMN category_override TEXT;
+
+INSERT OR IGNORE INTO settings (key, value) VALUES ('break_fullscreen', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('break_max_mins', '30');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('session_extend_mins', '5');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_focus_detect', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_break_detect', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('distraction_threshold_secs', '60');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('urge_surfing', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('planning_instructions', '');
+
+UPDATE settings SET value = '13' WHERE key = 'schema_version';
+"#;
+
+pub const SCHEMA_VERSION: i64 = 13;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i64 = conn
@@ -514,6 +568,30 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 10 {
         let _ = conn.execute_batch(MIGRATION_V10);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '10')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+    }
+    if current < 11 {
+        let _ = conn.execute_batch(MIGRATION_V11);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '11')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+    }
+    if current < 12 {
+        let _ = conn.execute_batch(MIGRATION_V12);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '12')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+    }
+    if current < 13 {
+        let _ = conn.execute_batch(MIGRATION_V13);
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

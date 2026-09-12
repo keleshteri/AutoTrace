@@ -180,12 +180,21 @@ function CalendarImportCard({
     }
   }
 
+  async function suggestPlanned() {
+    try {
+      const rows = await api.suggestPlannedFromCalendar(day);
+      setMsg(`Added ${rows.length} planned meeting(s) to Timer timeline for ${day}.`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   return (
     <div className="card" style={{ marginBottom: 12 }}>
       <p className="kicker">Calendar (ICS)</p>
       <p className="muted">
         Paste an .ics export. Events stay local. Suggest turns today&apos;s events
-        into sessions on the timeline.
+        into sessions on the timeline, or planned meetings on the Timer.
       </p>
       <textarea
         value={ics}
@@ -200,6 +209,9 @@ function CalendarImportCard({
         </button>
         <button type="button" className="btn" onClick={() => void suggest()}>
           Suggest sessions for today
+        </button>
+        <button type="button" className="btn" onClick={() => void suggestPlanned()}>
+          Plan meetings on Timer
         </button>
       </div>
       {msg && (
@@ -487,19 +499,7 @@ export function SettingsView({
             ]}
           />
         )}
-        {section === "coach" && (
-          <SettingsShell
-            title="Coach"
-            blurb="Productivity coach nudges during Focus (break reminders)."
-            rows={[
-              {
-                label: "Break coach popup",
-                value: "With Breaks",
-                hint: "Configure under Tracking → Breaks",
-              },
-            ]}
-          />
-        )}
+        {section === "coach" && <CoachSettingsPanel onError={onError} />}
         {section === "focus" && <FocusSettingsPanel onError={onError} />}
         {section === "labels" && (
           <SettingsShell
@@ -544,9 +544,7 @@ export function SettingsView({
         {section === "members" && (
           <SettingsShell title="Members" blurb="Team members (shell). Local-only installs have one user." />
         )}
-        {section === "planning" && (
-          <SettingsShell title="Planning" blurb="Planning preferences (shell)." />
-        )}
+        {section === "planning" && <PlanningSettingsPanel onError={onError} />}
         {section === "teams" && (
           <div className="settings-shell-card">
             <h2>Teams</h2>
@@ -920,6 +918,9 @@ export function SettingsView({
 function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
   const [pass, setPass] = useState("");
   const [blockPat, setBlockPat] = useState("");
+  const [matchField, setMatchField] = useState("app");
+  const [threshold, setThreshold] = useState("60");
+  const [urge, setUrge] = useState(false);
   const [rules, setRules] = useState<Awaited<ReturnType<typeof api.listBlockRules>>>([]);
   const [blockOn, setBlockOn] = useState(false);
   const [mlOn, setMlOn] = useState(true);
@@ -931,6 +932,8 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
         setRules(await api.listBlockRules());
         setBlockOn((await api.getFeatureFlag("distraction_block")) === "1");
         setMlOn((await api.getFeatureFlag("ml_tagging")) !== "0");
+        setUrge((await api.getFeatureFlag("urge_surfing")) === "1");
+        setThreshold((await api.getFeatureFlag("distraction_threshold_secs")) || "60");
         setVault(await api.vaultStatus());
       } catch (e) {
         onError(e instanceof Error ? e.message : String(e));
@@ -954,7 +957,34 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
           />
           Soft-block matching apps (skip tracking). Hard mode also logs to the privacy audit.
         </label>
+        <label className="muted" style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+          <input
+            type="checkbox"
+            checked={urge}
+            onChange={(e) => {
+              const v = e.target.checked;
+              setUrge(v);
+              void api.setFeatureFlag("urge_surfing", v ? "1" : "0");
+            }}
+          />
+          Urge surfing — lock the blocker banner for 10 seconds when triggered
+        </label>
         <div className="mini-form" style={{ marginTop: 10 }}>
+          <label className="muted">
+            Threshold (sec)
+            <input
+              value={threshold}
+              onChange={(e) => {
+                setThreshold(e.target.value);
+                void api.setFeatureFlag("distraction_threshold_secs", e.target.value);
+              }}
+            />
+          </label>
+          <select value={matchField} onChange={(e) => setMatchField(e.target.value)}>
+            <option value="app">App</option>
+            <option value="title">Title</option>
+            <option value="url">URL</option>
+          </select>
           <input
             value={blockPat}
             onChange={(e) => setBlockPat(e.target.value)}
@@ -965,7 +995,7 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
             className="btn"
             onClick={() =>
               void api
-                .createBlockRule(blockPat.trim(), "app", "soft")
+                .createBlockRule(blockPat.trim(), matchField, "soft")
                 .then(() => api.listBlockRules())
                 .then(setRules)
                 .then(() => setBlockPat(""))
@@ -978,7 +1008,7 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
             className="btn"
             onClick={() =>
               void api
-                .createBlockRule(blockPat.trim(), "app", "hard")
+                .createBlockRule(blockPat.trim(), matchField, "hard")
                 .then(() => api.listBlockRules())
                 .then(setRules)
                 .then(() => setBlockPat(""))
@@ -990,7 +1020,7 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
         <ul className="tree" style={{ marginTop: 8 }}>
           {rules.map((r) => (
             <li key={r.id}>
-              {r.pattern} ({r.mode})
+              {r.pattern} · {r.match_field} ({r.mode})
               <button
                 type="button"
                 className="btn"
@@ -1080,14 +1110,252 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
   );
 }
 
+function CoachSettingsPanel({ onError }: { onError: (m: string | null) => void }) {
+  const [autoStart, setAutoStart] = useState(false);
+  const [autoFocus, setAutoFocus] = useState(false);
+  const [autoBreak, setAutoBreak] = useState(false);
+  const [instructions, setInstructions] = useState("");
+  useEffect(() => {
+    void (async () => {
+      try {
+        setAutoStart((await api.getFeatureFlag("planned_auto_start")) === "1");
+        setAutoFocus((await api.getFeatureFlag("auto_focus_detect")) === "1");
+        setAutoBreak((await api.getFeatureFlag("auto_break_detect")) === "1");
+        setInstructions((await api.getFeatureFlag("planning_instructions")) || "");
+      } catch (e) {
+        onError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  }, [onError]);
+  return (
+    <div className="settings-shell-card">
+      <h2>Coach</h2>
+      <p className="muted">
+        Auto-advance planned sessions, optional auto Focus/Break detection, and permanent planning
+        instructions for Plan Schedule.
+      </p>
+      <div className="settings-shell-row">
+        <div>
+          <div>Auto-start planned sessions</div>
+          <div className="muted">Same as Settings → Planning</div>
+        </div>
+        <button
+          type="button"
+          className={`ws-toggle${autoStart ? " on" : ""}`}
+          onClick={() => {
+            const next = !autoStart;
+            setAutoStart(next);
+            void api.setFeatureFlag("planned_auto_start", next ? "1" : "0");
+          }}
+        >
+          {autoStart ? "On" : "Off"}
+        </button>
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Automatic focus detection</div>
+          <div className="muted">Start Focus when recent activity is mostly Focus/Code</div>
+        </div>
+        <button
+          type="button"
+          className={`ws-toggle${autoFocus ? " on" : ""}`}
+          onClick={() => {
+            const next = !autoFocus;
+            setAutoFocus(next);
+            void api.setFeatureFlag("auto_focus_detect", next ? "1" : "0");
+          }}
+        >
+          {autoFocus ? "On" : "Off"}
+        </button>
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Automatic break detection</div>
+          <div className="muted">Start Break when idle is long enough</div>
+        </div>
+        <button
+          type="button"
+          className={`ws-toggle${autoBreak ? " on" : ""}`}
+          onClick={() => {
+            const next = !autoBreak;
+            setAutoBreak(next);
+            void api.setFeatureFlag("auto_break_detect", next ? "1" : "0");
+          }}
+        >
+          {autoBreak ? "On" : "Off"}
+        </button>
+      </div>
+      <label className="muted" style={{ display: "block", marginTop: 14 }}>
+        Daily planning instructions
+        <textarea
+          rows={3}
+          style={{ width: "100%", marginTop: 6 }}
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          placeholder="e.g. I prefer the Pomodoro technique."
+        />
+      </label>
+      <button
+        type="button"
+        className="btn"
+        style={{ marginTop: 8 }}
+        onClick={() => void api.setFeatureFlag("planning_instructions", instructions)}
+      >
+        Save instructions
+      </button>
+    </div>
+  );
+}
+
+function PlanningSettingsPanel({ onError }: { onError: (m: string | null) => void }) {
+  const [autoStart, setAutoStart] = useState(false);
+  const [focusMins, setFocusMins] = useState("25");
+  const [breakMins, setBreakMins] = useState("5");
+  const [longBreakMins, setLongBreakMins] = useState("15");
+  const [rounds, setRounds] = useState("4");
+  const [instructions, setInstructions] = useState("");
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setAutoStart((await api.getFeatureFlag("planned_auto_start")) === "1");
+        setFocusMins((await api.getFeatureFlag("pomodoro_focus_mins")) || "25");
+        setBreakMins((await api.getFeatureFlag("pomodoro_break_mins")) || "5");
+        setLongBreakMins((await api.getFeatureFlag("pomodoro_long_break_mins")) || "15");
+        setRounds((await api.getFeatureFlag("pomodoro_rounds")) || "4");
+        setInstructions((await api.getFeatureFlag("planning_instructions")) || "");
+      } catch (e) {
+        onError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  }, [onError]);
+
+  return (
+    <div className="settings-shell-card">
+      <h2>Planning</h2>
+      <p className="muted">
+        Plan Focus / Break blocks from the Timer ⚡ menu. Classic Pomodoro and free-text Plan
+        Schedule write today’s timeline.
+      </p>
+      <div className="settings-shell-row">
+        <div>
+          <div>Auto-start planned sessions</div>
+          <div className="muted">
+            When enabled, due planned blocks start automatically. When off, you get a prompt.
+          </div>
+        </div>
+        <button
+          type="button"
+          className={`ws-toggle${autoStart ? " on" : ""}`}
+          onClick={() => {
+            const next = !autoStart;
+            setAutoStart(next);
+            void api.setFeatureFlag("planned_auto_start", next ? "1" : "0");
+          }}
+        >
+          {autoStart ? "On" : "Off"}
+        </button>
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Pomodoro focus (min)</div>
+        </div>
+        <input
+          type="number"
+          min={5}
+          max={120}
+          style={{ width: 80 }}
+          value={focusMins}
+          onChange={(e) => {
+            setFocusMins(e.target.value);
+            void api.setFeatureFlag("pomodoro_focus_mins", e.target.value);
+          }}
+        />
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Short break (min)</div>
+        </div>
+        <input
+          type="number"
+          min={1}
+          max={60}
+          style={{ width: 80 }}
+          value={breakMins}
+          onChange={(e) => {
+            setBreakMins(e.target.value);
+            void api.setFeatureFlag("pomodoro_break_mins", e.target.value);
+          }}
+        />
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Long break (min)</div>
+        </div>
+        <input
+          type="number"
+          min={5}
+          max={120}
+          style={{ width: 80 }}
+          value={longBreakMins}
+          onChange={(e) => {
+            setLongBreakMins(e.target.value);
+            void api.setFeatureFlag("pomodoro_long_break_mins", e.target.value);
+          }}
+        />
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Rounds before long break</div>
+        </div>
+        <input
+          type="number"
+          min={1}
+          max={12}
+          style={{ width: 80 }}
+          value={rounds}
+          onChange={(e) => {
+            setRounds(e.target.value);
+            void api.setFeatureFlag("pomodoro_rounds", e.target.value);
+          }}
+        />
+      </div>
+      <label className="muted" style={{ display: "block", marginTop: 14 }}>
+        Permanent planning instructions
+        <textarea
+          rows={3}
+          style={{ width: "100%", marginTop: 6 }}
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          placeholder="e.g. I prefer the Pomodoro technique."
+        />
+      </label>
+      <button
+        type="button"
+        className="btn"
+        style={{ marginTop: 8 }}
+        onClick={() => void api.setFeatureFlag("planning_instructions", instructions)}
+      >
+        Save instructions
+      </button>
+    </div>
+  );
+}
+
 function FocusSettingsPanel({ onError }: { onError: (m: string | null) => void }) {
   const [defaultMins, setDefaultMins] = useState("50");
+  const [meetingMins, setMeetingMins] = useState("30");
+  const [extendMins, setExtendMins] = useState("5");
+  const [autoFocus, setAutoFocus] = useState(false);
   const [autoBreak, setAutoBreak] = useState(true);
 
   useEffect(() => {
     void (async () => {
       try {
         setDefaultMins((await api.getFeatureFlag("focus_default_mins")) || "50");
+        setMeetingMins((await api.getFeatureFlag("meeting_default_mins")) || "30");
+        setExtendMins((await api.getFeatureFlag("session_extend_mins")) || "5");
+        setAutoFocus((await api.getFeatureFlag("auto_focus_detect")) === "1");
         setAutoBreak((await api.getFeatureFlag("break_reminders")) === "1");
       } catch (e) {
         onError(e instanceof Error ? e.message : String(e));
@@ -1099,7 +1367,7 @@ function FocusSettingsPanel({ onError }: { onError: (m: string | null) => void }
     <div className="settings-shell-card">
       <h2>Focus</h2>
       <p className="muted">
-        Start Focus from the bottom status bar or Timer. Break coach pops up after sustained work.
+        Start Focus, Meeting, or Break from the Timer play menu or status bar Start menu.
       </p>
       <div className="settings-shell-row">
         <div>
@@ -1120,8 +1388,59 @@ function FocusSettingsPanel({ onError }: { onError: (m: string | null) => void }
       </div>
       <div className="settings-shell-row">
         <div>
-          <div>Break coach during Focus</div>
-          <div className="muted">Same as Tracking → Breaks reminders</div>
+          <div>Default meeting length (min)</div>
+          <div className="muted">Pre-selected duration in Start Meeting</div>
+        </div>
+        <input
+          type="number"
+          min={5}
+          max={240}
+          style={{ width: 80 }}
+          value={meetingMins}
+          onChange={(e) => {
+            setMeetingMins(e.target.value);
+            void api.setFeatureFlag("meeting_default_mins", e.target.value);
+          }}
+        />
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Session extension (min)</div>
+          <div className="muted">Added when you tap + on the timer</div>
+        </div>
+        <input
+          type="number"
+          min={1}
+          max={60}
+          style={{ width: 80 }}
+          value={extendMins}
+          onChange={(e) => {
+            setExtendMins(e.target.value);
+            void api.setFeatureFlag("session_extend_mins", e.target.value);
+          }}
+        />
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Automatic focus detection</div>
+          <div className="muted">Start Focus from sustained Focus/Code activity</div>
+        </div>
+        <button
+          type="button"
+          className={`ws-toggle${autoFocus ? " on" : ""}`}
+          onClick={() => {
+            const next = !autoFocus;
+            setAutoFocus(next);
+            void api.setFeatureFlag("auto_focus_detect", next ? "1" : "0");
+          }}
+        >
+          {autoFocus ? "On" : "Off"}
+        </button>
+      </div>
+      <div className="settings-shell-row">
+        <div>
+          <div>Break coach</div>
+          <div className="muted">Remind after time since last break</div>
         </div>
         <button
           type="button"
@@ -1143,12 +1462,20 @@ function BreakReminders({ onError }: { onError: (m: string | null) => void }) {
   const [on, setOn] = useState(false);
   const [every, setEvery] = useState("50");
   const [len, setLen] = useState("5");
+  const [snooze, setSnooze] = useState("5");
+  const [maxMins, setMaxMins] = useState("30");
+  const [fullscreen, setFullscreen] = useState(false);
+  const [autoBreak, setAutoBreak] = useState(false);
   useEffect(() => {
     void (async () => {
       try {
         setOn((await api.getFeatureFlag("break_reminders")) === "1");
         setEvery((await api.getFeatureFlag("break_every_mins")) || "50");
         setLen((await api.getFeatureFlag("break_length_mins")) || "5");
+        setSnooze((await api.getFeatureFlag("break_snooze_mins")) || "5");
+        setMaxMins((await api.getFeatureFlag("break_max_mins")) || "30");
+        setFullscreen((await api.getFeatureFlag("break_fullscreen")) === "1");
+        setAutoBreak((await api.getFeatureFlag("auto_break_detect")) === "1");
       } catch (e) {
         onError(e instanceof Error ? e.message : String(e));
       }
@@ -1166,7 +1493,31 @@ function BreakReminders({ onError }: { onError: (m: string | null) => void }) {
             void api.setFeatureFlag("break_reminders", v ? "1" : "0");
           }}
         />
-        Remind me to take breaks during Focus
+        Automatic break reminders (time since last break)
+      </label>
+      <label className="muted" style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+        <input
+          type="checkbox"
+          checked={autoBreak}
+          onChange={(e) => {
+            const v = e.target.checked;
+            setAutoBreak(v);
+            void api.setFeatureFlag("auto_break_detect", v ? "1" : "0");
+          }}
+        />
+        Automatic break detection (start Break when idle is long enough)
+      </label>
+      <label className="muted" style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+        <input
+          type="checkbox"
+          checked={fullscreen}
+          onChange={(e) => {
+            const v = e.target.checked;
+            setFullscreen(v);
+            void api.setFeatureFlag("break_fullscreen", v ? "1" : "0");
+          }}
+        />
+        Full-screen break mode
       </label>
       <div className="mini-form" style={{ marginTop: 10 }}>
         <label className="muted">
@@ -1177,12 +1528,22 @@ function BreakReminders({ onError }: { onError: (m: string | null) => void }) {
           Break length (min)
           <input value={len} onChange={(e) => setLen(e.target.value)} />
         </label>
+        <label className="muted">
+          Snooze (min)
+          <input value={snooze} onChange={(e) => setSnooze(e.target.value)} />
+        </label>
+        <label className="muted">
+          Max break (min)
+          <input value={maxMins} onChange={(e) => setMaxMins(e.target.value)} />
+        </label>
         <button
           type="button"
           className="btn"
           onClick={() => {
             void api.setFeatureFlag("break_every_mins", every);
             void api.setFeatureFlag("break_length_mins", len);
+            void api.setFeatureFlag("break_snooze_mins", snooze);
+            void api.setFeatureFlag("break_max_mins", maxMins);
           }}
         >
           Save
