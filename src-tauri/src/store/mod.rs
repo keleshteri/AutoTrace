@@ -3327,35 +3327,5 @@ pub struct AppState {
 
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn store_open_migrate_and_session() {
-        let dir = std::env::temp_dir().join(format!("autotrace-store-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = Store::open(dir.join("t.db")).unwrap();
-        assert!(store.schema_version().unwrap() >= 7);
-        let app = store.upsert_app("Code", None).unwrap();
-        let id = store
-            .start_session(
-                app,
-                Some("hello"),
-                None,
-                "2026-09-05T09:00:00",
-                false,
-                None,
-                false,
-                Some("Code"),
-            )
-            .unwrap();
-        store
-            .touch_session(id, "2026-09-05T09:15:00", false)
-            .unwrap();
-        let rows = store.sessions_for_day("2026-09-05").unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].category.as_deref(), Some("Code"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+#[path = "timer_tests.rs"]
+mod timer_tests;

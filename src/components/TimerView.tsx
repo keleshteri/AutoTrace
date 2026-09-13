@@ -10,6 +10,7 @@ import {
 } from "../lib/api";
 import { StartSessionModal } from "./StartSessionModal";
 import { PlanScheduleModal } from "./PlanScheduleModal";
+import { displaySecs, sessionCaption } from "../lib/timerDisplay";
 
 type Props = {
   focus: FocusSession | null;
@@ -20,29 +21,6 @@ type Props = {
   onError: (msg: string | null) => void;
   onOpenActivity: () => void;
 };
-
-function sessionCaption(focus: FocusSession | null, sinceBreak: boolean): string {
-  if (!focus) return sinceBreak ? "Time since last break" : "Ready";
-  const kind = (focus.kind || "focus").toLowerCase();
-  if (focus.status === "paused") {
-    if (kind === "meeting") return "Meeting paused";
-    if (kind === "break") return "Break paused";
-    return "Focus paused";
-  }
-  if (kind === "meeting") return "Meeting time elapsed";
-  if (kind === "break") return "Break remaining";
-  return "Focus time elapsed";
-}
-
-function displaySecs(focus: FocusSession | null, sinceBreakSecs: number): number {
-  if (!focus) return sinceBreakSecs;
-  const planned = focus.planned_secs;
-  const elapsed = focus.elapsed_secs ?? 0;
-  if ((focus.kind || "").toLowerCase() === "break" && planned != null && planned > 0) {
-    return Math.max(0, planned - elapsed);
-  }
-  return elapsed;
-}
 
 function fmtClock(iso: string): string {
   const t = iso.includes("T") ? iso.slice(11, 16) : iso;

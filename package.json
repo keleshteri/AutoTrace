@@ -11,6 +11,13 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "test": "npm run test:unit && npm run test:rust",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
+    "test:all": "npm run test:unit && npm run test:rust && npm run test:e2e",
     "release:local": "bash scripts/release-local.sh",
     "release:bump": "bash scripts/bump-version.sh",
     "ai:sidecar": "npm --prefix ai-sidecar start",
@@ -24,11 +31,15 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tauri-apps/cli": "^2",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "jsdom": "^26.1.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^3.2.7"
   }
 }
