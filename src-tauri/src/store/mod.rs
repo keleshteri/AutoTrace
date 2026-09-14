@@ -1302,6 +1302,7 @@ impl Store {
              WHERE id = ?2",
             params![default, row.id],
         )?;
+        conn.execute("DELETE FROM oauth_tokens WHERE provider = ?1", params![kind])?;
         Ok(())
     }
 
@@ -2814,12 +2815,6 @@ impl Store {
             )
             .optional()?;
         Ok(row)
-    }
-
-    pub fn clear_oauth_token(&self, provider: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("store mutex poisoned");
-        conn.execute("DELETE FROM oauth_tokens WHERE provider = ?1", params![provider])?;
-        Ok(())
     }
 
     /// Turn today's calendar events into planned Meeting blocks (skip duplicates).
