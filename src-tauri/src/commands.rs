@@ -1119,7 +1119,6 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
     if url.scheme() != "https" || url.host_str().map(|h| h.is_empty()).unwrap_or(true) {
         return Err("only https:// links can be opened".into());
     }
-    // Serialized form is percent-encoded, so no shell metacharacters survive.
     Ok(url.to_string())
 }
 
@@ -1269,8 +1268,31 @@ pub fn delete_block_rule(state: State<'_, AppState>, id: i64) -> Result<(), Stri
     state.store.delete_block_rule(id).map_err(|e| e.to_string())
 }
 
+/// Settings the backend owns; the UI must never overwrite them directly.
+const PROTECTED_SETTINGS: &[&str] = &["schema_version", "db_encryption", "last_break_at"];
+
+fn check_setting_write(key: &str, value: &str) -> Result<(), String> {
+    let well_formed = !key.is_empty()
+        && key.len() <= 64
+        && key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if !well_formed {
+        return Err(format!("invalid setting key: {key:?}"));
+    }
+    if PROTECTED_SETTINGS.contains(&key) {
+        return Err(format!("setting {key} is managed by AutoTrace"));
+    }
+    if key == "ai_sidecar_url" && !value.is_empty() && !crate::ai::gateway::is_loopback_http_url(value) {
+        return Err("AI sidecar URL must be http://127.0.0.1, http://localhost or http://[::1]".into());
+    }
+    if value.len() > 64 * 1024 {
+        return Err("setting value too large".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_feature_flag(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+    check_setting_write(&key, &value)?;
     state.store.set_setting(&key, &value).map_err(|e| e.to_string())
 }
 
@@ -1674,20 +1696,58 @@ pub fn run_ai_agent(
 
 #[tauri::command]
 pub fn ai_sidecar_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let enabled = state.store.get_setting("ai_sidecar_enabled").ok().flatten().as_deref() == Some("1");
     let url = state
         .store
         .get_setting("ai_sidecar_url")
         .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| "http://127.0.0.1:17991".into());
-    let healthy = reqwest::blocking::Client::new()
-        .get(format!("{}/health", url.trim_end_matches('/')))
-        .timeout(std::time::Duration::from_millis(500))
-        .send()
-        .map(|r| r.status().is_success())
-        .unwrap_or(false);
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| crate::ai::gateway::DEFAULT_SIDECAR_URL.into());
+    let loopback = crate::ai::gateway::is_loopback_http_url(&url);
+    let healthy = enabled
+        && loopback
+        && reqwest::blocking::Client::new()
+            .get(format!("{}/health", url.trim_end_matches('/')))
+            .timeout(std::time::Duration::from_millis(500))
+            .send()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
     Ok(serde_json::json!({
         "url": url,
+        "enabled": enabled,
+        "loopback": loopback,
         "healthy": healthy,
         "ai_enabled": state.store.ai_enabled(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_urls_must_be_https() {
+        assert!(validate_external_url("https://github.com/keleshteri/AutoTrace").is_ok());
+        assert!(validate_external_url("http://example.com").is_err());
+        assert!(validate_external_url("file:///etc/passwd").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+        assert!(validate_external_url("not a url").is_err());
+    }
+
+    #[test]
+    fn external_urls_are_normalized() {
+        // Passed as a single argv entry (no shell), so only normalization matters.
+        let out = validate_external_url(" https://example.com/a b\"c ").unwrap();
+        assert_eq!(out, "https://example.com/a%20b%22c");
+    }
+
+    #[test]
+    fn setting_writes_are_guarded() {
+        assert!(check_setting_write("break_every_mins", "50").is_ok());
+        assert!(check_setting_write("db_encryption", "0").is_err());
+        assert!(check_setting_write("schema_version", "1").is_err());
+        assert!(check_setting_write("Bad Key", "1").is_err());
+        assert!(check_setting_write("ai_sidecar_url", "http://127.0.0.1:17991").is_ok());
+        assert!(check_setting_write("ai_sidecar_url", "https://evil.example").is_err());
+    }
 }

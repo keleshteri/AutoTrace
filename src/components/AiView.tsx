@@ -60,6 +60,7 @@ export function AiView({ onError }: Props) {
   const [showSkills, setShowSkills] = useState(false);
   const [templates, setTemplates] = useState<AiTemplate[]>([]);
   const [apiStatus, setApiStatus] = useState("…");
+  const [sidecar, setSidecar] = useState<{ enabled: boolean; healthy: boolean } | null>(null);
 
   const day = todayLocal();
   const greet = useMemo(() => greetingName(), []);
@@ -76,6 +77,7 @@ export function AiView({ onError }: Props) {
       setChats(chatsList);
       setTemplates(tpls);
       setApiStatus(local);
+      setSidecar(await api.aiSidecarStatus().catch(() => null));
       if (!chatId && chatsList[0]) setChatId(chatsList[0].id);
       onError(null);
     } catch (e) {
@@ -203,6 +205,27 @@ export function AiView({ onError }: Props) {
               }}
             />
             AI on
+          </label>
+          <label
+            className="agent-enable"
+            title="Route requests through the local LangGraph sidecar (pnpm ai:sidecar). It receives your provider API key, so it only runs on 127.0.0.1 and only when enabled here."
+          >
+            <input
+              type="checkbox"
+              checked={sidecar?.enabled ?? false}
+              onChange={(e) => {
+                const v = e.target.checked;
+                void api
+                  .setFeatureFlag("ai_sidecar_enabled", v ? "1" : "0")
+                  .then(() => api.aiSidecarStatus())
+                  .then(setSidecar)
+                  .catch((err) => onError(String(err)));
+              }}
+            />
+            Sidecar
+            {sidecar?.enabled && (
+              <span className="muted">{sidecar.healthy ? " · running" : " · not running"}</span>
+            )}
           </label>
         </div>
       </div>

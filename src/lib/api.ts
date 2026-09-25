@@ -658,9 +658,13 @@ export const api = {
       day: payload.day ?? null,
     }),
   aiSidecarStatus: () =>
-    invoke<{ url: string; healthy: boolean; ai_enabled: boolean }>(
-      "ai_sidecar_status",
-    ),
+    invoke<{
+      url: string;
+      enabled: boolean;
+      loopback: boolean;
+      healthy: boolean;
+      ai_enabled: boolean;
+    }>("ai_sidecar_status"),
 };
 
 export type AiProvider = {

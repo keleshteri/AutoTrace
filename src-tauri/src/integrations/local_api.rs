@@ -163,14 +163,18 @@ impl Drop for LocalApiHandle {
     }
 }
 
-fn port_from_config(config_json: &str) -> u16 {
+pub(crate) fn port_from_config(config_json: &str) -> u16 {
     serde_json::from_str::<serde_json::Value>(config_json)
         .ok()
         .and_then(|v| v.get("port").and_then(|p| p.as_u64()))
         .unwrap_or(17890) as u16
 }
 
-fn token_from_config(config_json: &str) -> String {
+pub(crate) fn base_url_from_config(config_json: &str) -> String {
+    format!("http://127.0.0.1:{}", port_from_config(config_json))
+}
+
+pub(crate) fn token_from_config(config_json: &str) -> String {
     serde_json::from_str::<serde_json::Value>(config_json)
         .ok()
         .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(|s| s.to_string()))
