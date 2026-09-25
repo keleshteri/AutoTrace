@@ -554,7 +554,9 @@ export const api = {
   unlockDatabase: (passphrase: string) =>
     invoke<void>("unlock_database", { passphrase }),
   vaultStatus: () =>
-    invoke<{ vault_exists: boolean; db_encryption: string | null }>("vault_status"),
+    invoke<{ vault_exists: boolean; locked: boolean; db_encryption: string | null }>(
+      "vault_status",
+    ),
   oauthAuthorizeUrl: (provider: string, clientId: string, redirectUri: string) =>
     invoke<string>("oauth_authorize_url", { provider, clientId, redirectUri }),
   oauthExchangeCode: (payload: {

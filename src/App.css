@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
+/* Plus Jakarta Sans is bundled locally (see main.tsx) — no third-party font requests. */
 
 :root {
   --bg: #070708;
@@ -10,6 +10,7 @@
   --border: #26262e;
   --border-subtle: #1c1c22;
   --ink: #f4f4f5;
+  --text: var(--ink);
   --muted: #8b8b96;
   --muted-2: #5c5c68;
   --accent: #7c5cfa;
@@ -3237,4 +3238,60 @@ button {
 .nav-item.nested {
   padding-left: 28px;
   font-size: 12px;
+}
+
+/* ---------- Vault unlock screen ---------- */
+.vault-gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.vault-card {
+  width: min(400px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 28px;
+}
+
+.vault-card h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.vault-card p {
+  margin: 0;
+}
+
+.vault-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.vault-field input {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.vault-error {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

@@ -406,15 +406,23 @@ pub fn export_csv_for_day(state: State<'_, AppState>, day: String) -> Result<Str
         .map_err(|e| e.to_string())
 }
 
-/// Initialize store + tracker once the Tauri app handle is available.
-pub fn init_state(app: &AppHandle) -> Result<AppState, String> {
+/// Where the SQLite file (and its encrypted vault) live. Managed even while
+/// the database is locked so the unlock screen can find it.
+pub struct DbLocation {
+    pub db_path: std::path::PathBuf,
+}
+
+pub fn resolve_db_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let app_data = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("resolve app data dir: {e}"))?;
+    Ok(Store::default_db_path(&app_data))
+}
 
-    let db_path = Store::default_db_path(&app_data);
-    let store = Arc::new(Store::open(&db_path).map_err(|e| e.to_string())?);
+/// Initialize store + tracker for an unlocked database.
+pub fn init_state(db_path: &std::path::Path) -> Result<AppState, String> {
+    let store = Arc::new(Store::open(db_path).map_err(|e| e.to_string())?);
     // Leftover active focus from a previous process must not keep accruing.
     let _ = store.reconcile_stale_focus_on_launch();
     let tracker = Arc::new(TrackerHandle::start(Arc::clone(&store)));
@@ -1105,12 +1113,24 @@ pub fn distraction_report(
         .map_err(|e| e.to_string())
 }
 
+/// Only well-formed https:// links may be handed to the OS opener.
+fn validate_external_url(raw: &str) -> Result<String, String> {
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| "invalid URL".to_string())?;
+    if url.scheme() != "https" || url.host_str().map(|h| h.is_empty()).unwrap_or(true) {
+        return Err("only https:// links can be opened".into());
+    }
+    // Serialized form is percent-encoded, so no shell metacharacters survive.
+    Ok(url.to_string())
+}
+
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
+    let url = validate_external_url(&url)?;
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &url])
+        // No `cmd /C start`: cmd would interpret `&`, `|`, `^` in the URL.
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &url])
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -1259,30 +1279,68 @@ pub fn get_feature_flag(state: State<'_, AppState>, key: String) -> Result<Optio
     state.store.get_setting(&key).map_err(|e| e.to_string())
 }
 
+/// Encrypt the DB at rest. Stops tracking, closes the SQLite file, encrypts
+/// it, then quits; the next launch asks for the passphrase before opening.
 #[tauri::command]
-pub fn lock_database(state: State<'_, AppState>, passphrase: String) -> Result<(), String> {
+pub fn lock_database(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    passphrase: String,
+) -> Result<(), String> {
+    crate::vault::validate_passphrase(&passphrase).map_err(|e| e.to_string())?;
     let path = state.store.path().to_path_buf();
-    // At-rest: encrypt to .db.vault and remove plaintext DB + WAL/SHM. Unlock before next launch.
-    crate::vault::lock_database(&path, &passphrase, true).map_err(|e| e.to_string())?;
+
+    let _ = state.store.pause_focus();
     let _ = state.store.log_privacy_event("vault_lock", Some("database encrypted at rest"));
     state
         .store
         .set_setting("db_encryption", "1")
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.tracker.stop();
+    state.local_api.stop();
+    state.store.close_file().map_err(|e| e.to_string())?;
+
+    if let Err(e) = crate::vault::lock_database(&path, &passphrase) {
+        let _ = state.store.reopen_file();
+        let _ = state.store.set_setting("db_encryption", "0");
+        return Err(format!("{e}. Tracking is paused — restart AutoTrace to resume."));
+    }
+
+    // Give the UI a moment to show the confirmation, then quit.
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        app.exit(0);
+    });
+    Ok(())
+}
+
+/// Decrypt the vault at launch, then start the store + tracker.
+#[tauri::command]
+pub fn unlock_database(
+    app: AppHandle,
+    location: State<'_, DbLocation>,
+    passphrase: String,
+) -> Result<(), String> {
+    if app.try_state::<AppState>().is_some() {
+        return Err("database is already unlocked".into());
+    }
+    crate::vault::unlock_database(&location.db_path, &passphrase).map_err(|e| e.to_string())?;
+    let state = init_state(&location.db_path)?;
+    let _ = state.store.set_setting("db_encryption", "0");
+    let _ = state.store.log_privacy_event("vault_unlock", Some("database decrypted"));
+    app.manage(state);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn unlock_database(state: State<'_, AppState>, passphrase: String) -> Result<(), String> {
-    let path = state.store.path().to_path_buf();
-    crate::vault::unlock_database(&path, &passphrase).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn vault_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let path = state.store.path().to_path_buf();
+pub fn vault_status(app: AppHandle, location: State<'_, DbLocation>) -> Result<serde_json::Value, String> {
+    let db_encryption = app
+        .try_state::<AppState>()
+        .and_then(|s| s.store.get_setting("db_encryption").ok().flatten());
     Ok(serde_json::json!({
-        "vault_exists": crate::vault::vault_exists(&path),
-        "db_encryption": state.store.get_setting("db_encryption").ok().flatten(),
+        "vault_exists": crate::vault::vault_exists(&location.db_path),
+        "locked": crate::vault::is_locked(&location.db_path),
+        "db_encryption": db_encryption,
     }))
 }
 

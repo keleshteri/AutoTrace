@@ -24,6 +24,7 @@
     "ai:sidecar:install": "npm --prefix ai-sidecar install"
   },
   "dependencies": {
+    "@fontsource/plus-jakarta-sans": "^5.3.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.11.0",

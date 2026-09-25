@@ -80,6 +80,26 @@ impl Store {
         &self.path
     }
 
+    /// Flush and close the on-disk connection so the file can be encrypted and
+    /// removed. Later calls hit a throwaway in-memory DB until `reopen_file`.
+    pub fn close_file(&self) -> Result<()> {
+        let mut conn = self.conn.lock().expect("store mutex poisoned");
+        // No-op in rollback-journal mode; folds the WAL back if WAL is ever enabled.
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let old = std::mem::replace(&mut *conn, Connection::open_in_memory()?);
+        old.close().map_err(|(_, e)| StoreError::Sqlite(e))?;
+        Ok(())
+    }
+
+    /// Reattach to the on-disk file after a failed `close_file` + lock attempt.
+    pub fn reopen_file(&self) -> Result<()> {
+        let fresh = Connection::open(&self.path)?;
+        fresh.execute_batch("PRAGMA foreign_keys = ON;")?;
+        let mut conn = self.conn.lock().expect("store mutex poisoned");
+        *conn = fresh;
+        Ok(())
+    }
+
     pub fn schema_version(&self) -> Result<i64> {
         Ok(self
             .get_setting("schema_version")?

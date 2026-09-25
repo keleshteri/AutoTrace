@@ -146,7 +146,7 @@ impl LocalApiHandle {
         }
     }
 
-    fn stop(&self) {
+    pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         // Join briefly; server loop exits on next timeout.
         if let Ok(mut g) = self.join.lock() {
