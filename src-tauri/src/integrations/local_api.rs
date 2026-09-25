@@ -1,6 +1,6 @@
 //! Localhost export API — token-gated, 127.0.0.1 only. Off by default.
 
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -186,18 +186,25 @@ fn authorize(request: &tiny_http::Request, token: &str) -> bool {
         // Require a token when enabled — refuse all if misconfigured empty.
         return false;
     }
-    let auth = request
+    // Header only: query-string tokens leak into logs, history and referrers.
+    let Some(auth) = request
         .headers()
         .iter()
         .find(|h| h.field.equiv("Authorization"))
-        .map(|h| h.value.as_str().to_string());
-    match auth {
-        Some(a) if a == format!("Bearer {token}") => true,
-        Some(a) if a == token => true,
-        _ => request
-            .url()
-            .contains(&format!("access_token={token}")),
+        .map(|h| h.value.as_str().trim().to_string())
+    else {
+        return false;
+    };
+    let presented = auth.strip_prefix("Bearer ").unwrap_or(&auth);
+    constant_time_eq(presented.as_bytes(), token.as_bytes())
+}
+
+/// Compare without early exit so response timing does not leak the token.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
     }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn handle_sessions(store: &Store, path: &str) -> Response<Cursor<Vec<u8>>> {
@@ -228,43 +235,42 @@ fn handle_export_day(store: &Store, path: &str) -> Response<Cursor<Vec<u8>>> {
     if day.len() != 10 {
         return json_response(400, serde_json::json!({"error": "use /v1/export/YYYY-MM-DD"}));
     }
-    match store.export_csv_for_day(day) {
-        Ok(csv) => {
-            // Still privacy-filter: only include rows that correspond to eligible summaries.
-            // CSV export historically includes all sessions; for API we return eligible JSON instead if preferred.
-            // Provide CSV of eligible entries only.
-            let entries = store.eligible_export_entries(None).unwrap_or_default();
-            let mut out = String::from(
-                "session_id,started_at,ended_at,duration_mins,client,project,task,description\n",
-            );
-            for e in entries.into_iter().filter(|e| e.started_at.starts_with(day)) {
-                out.push_str(&format!(
-                    "{},{},{},{},{},{},{},{}\n",
-                    e.session_id,
-                    e.started_at,
-                    e.ended_at.unwrap_or_default(),
-                    e.duration_mins,
-                    csv_escape(e.client_name.as_deref().unwrap_or("")),
-                    csv_escape(e.project_name.as_deref().unwrap_or("")),
-                    csv_escape(e.task_name.as_deref().unwrap_or("")),
-                    csv_escape(&e.description),
-                ));
-            }
-            let _ = csv; // unused full export — intentional privacy filter
-            let data = out.into_bytes();
-            let mut resp = Response::from_data(data);
-            if let Ok(h) = Header::from_bytes("Content-Type", "text/csv; charset=utf-8") {
-                resp.add_header(h);
-            }
-            resp
-        }
-        Err(e) => json_response(500, serde_json::json!({"error": e.to_string()})),
+    // Only approved, export-eligible entries leave the app (not the raw day CSV).
+    let entries = match store.eligible_export_entries(None) {
+        Ok(e) => e,
+        Err(e) => return json_response(500, serde_json::json!({"error": e.to_string()})),
+    };
+    let mut out = String::from(
+        "session_id,started_at,ended_at,duration_mins,client,project,task,description\n",
+    );
+    for e in entries.into_iter().filter(|e| e.started_at.starts_with(day)) {
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{}\n",
+            e.session_id,
+            e.started_at,
+            e.ended_at.unwrap_or_default(),
+            e.duration_mins,
+            csv_escape(e.client_name.as_deref().unwrap_or("")),
+            csv_escape(e.project_name.as_deref().unwrap_or("")),
+            csv_escape(e.task_name.as_deref().unwrap_or("")),
+            csv_escape(&e.description),
+        ));
     }
+    let mut resp = Response::from_data(out.into_bytes());
+    if let Ok(h) = Header::from_bytes("Content-Type", "text/csv; charset=utf-8") {
+        resp.add_header(h);
+    }
+    resp
 }
 
 fn handle_mcp(store: &Store, request: &mut tiny_http::Request) -> Response<Cursor<Vec<u8>>> {
+    const MAX_BODY: u64 = 1024 * 1024;
     let mut body = String::new();
-    request.as_reader().read_to_string(&mut body).ok();
+    if request.as_reader().take(MAX_BODY + 1).read_to_string(&mut body).is_err()
+        || body.len() as u64 > MAX_BODY
+    {
+        return json_response(413, serde_json::json!({"error": "request body too large or not UTF-8"}));
+    }
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::json!({}));
 
     if parsed.get("jsonrpc").and_then(|j| j.as_str()) == Some("2.0") {
@@ -437,4 +443,33 @@ fn json_response(code: u16, value: serde_json::Value) -> Response<Cursor<Vec<u8>
         resp.add_header(h);
     }
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constant_time_eq_behaves_like_eq() {
+        assert!(constant_time_eq(b"secret-token", b"secret-token"));
+        assert!(!constant_time_eq(b"secret-token", b"secret-tokem"));
+        assert!(!constant_time_eq(b"secret", b"secret-token"));
+        assert!(!constant_time_eq(b"", b"x"));
+    }
+
+    #[test]
+    fn csv_escape_quotes_special_fields() {
+        assert_eq!(csv_escape("plain"), "plain");
+        assert_eq!(csv_escape("a,b"), "\"a,b\"");
+        assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
+
+    #[test]
+    fn config_helpers_fall_back_to_defaults() {
+        assert_eq!(port_from_config("{}"), 17890);
+        assert_eq!(port_from_config(r#"{"port": 18000}"#), 18000);
+        assert_eq!(base_url_from_config(r#"{"port": 18000}"#), "http://127.0.0.1:18000");
+        assert_eq!(token_from_config(r#"{"token": "abc"}"#), "abc");
+        assert_eq!(token_from_config("not json"), "");
+    }
 }

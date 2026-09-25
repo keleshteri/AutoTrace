@@ -1016,6 +1016,19 @@ pub fn export_sync_pack(state: State<'_, AppState>) -> Result<String, String> {
     state.store.export_sync_pack().map_err(|e| e.to_string())
 }
 
+/// The bearer token rides along, so only https (or this machine) is allowed.
+fn check_sync_url(url: &str) -> Result<(), String> {
+    let ok = reqwest::Url::parse(url)
+        .map(|u| u.scheme() == "https")
+        .unwrap_or(false)
+        || crate::ai::gateway::is_loopback_http_url(url);
+    if ok {
+        Ok(())
+    } else {
+        Err("sync URL must start with https:// (http is only allowed for 127.0.0.1/localhost)".into())
+    }
+}
+
 #[tauri::command]
 pub fn push_sync_pack(state: State<'_, AppState>, workspace_id: i64) -> Result<String, String> {
     let pack = state.store.export_sync_pack().map_err(|e| e.to_string())?;
@@ -1028,6 +1041,7 @@ pub fn push_sync_pack(state: State<'_, AppState>, workspace_id: i64) -> Result<S
         .sync_url
         .filter(|u| !u.is_empty())
         .ok_or_else(|| "set a sync URL on the workspace first".to_string())?;
+    check_sync_url(&url)?;
     let token = state
         .store
         .workspace_sync_token(workspace_id)
@@ -1062,6 +1076,7 @@ pub fn pull_sync_pack(state: State<'_, AppState>, workspace_id: i64) -> Result<i
         .sync_url
         .filter(|u| !u.is_empty())
         .ok_or_else(|| "set a sync URL on the workspace first".to_string())?;
+    check_sync_url(&url)?;
     let token = state
         .store
         .workspace_sync_token(workspace_id)
@@ -1749,5 +1764,13 @@ mod tests {
         assert!(check_setting_write("Bad Key", "1").is_err());
         assert!(check_setting_write("ai_sidecar_url", "http://127.0.0.1:17991").is_ok());
         assert!(check_setting_write("ai_sidecar_url", "https://evil.example").is_err());
+    }
+
+    #[test]
+    fn sync_urls_require_tls_off_machine() {
+        assert!(check_sync_url("https://sync.example.com").is_ok());
+        assert!(check_sync_url("http://127.0.0.1:8787").is_ok());
+        assert!(check_sync_url("http://sync.example.com").is_err());
+        assert!(check_sync_url("ftp://x").is_err());
     }
 }

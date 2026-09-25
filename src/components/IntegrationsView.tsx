@@ -26,7 +26,7 @@ const KIND_META: Record<
   webhook: {
     title: "Webhook",
     blurb:
-      "POST approved entry summaries to your HTTPS endpoint. Optional shared secret signs X-AutoTrace-Signature.",
+      "POST approved entry summaries to your HTTPS endpoint. Optional shared secret adds an HMAC-SHA256 X-AutoTrace-Signature-256 header.",
     fields: [
       { key: "url", label: "HTTPS URL" },
       { key: "secret", label: "Shared secret (optional)", secret: true },
