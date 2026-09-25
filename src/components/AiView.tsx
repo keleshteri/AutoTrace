@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AiProvidersPanel } from "./AiProvidersPanel";
 import {
   AiChat,
   AiMessage,
@@ -11,7 +12,7 @@ import {
 
 type Props = { onError: (msg: string | null) => void };
 
-type AgentMode = "home" | "history" | "mcp" | "prompts";
+type AgentMode = "home" | "history" | "mcp" | "prompts" | "providers";
 
 const QUICK: { id: string; label: string; prompt: string; agent: string; day?: boolean }[] = [
   {
@@ -192,6 +193,13 @@ export function AiView({ onError }: Props) {
           >
             <PromptsIcon /> Prompts
           </button>
+          <button
+            type="button"
+            className={mode === "providers" ? "active" : undefined}
+            onClick={() => setMode(mode === "providers" ? "home" : "providers")}
+          >
+            <GearIcon /> Providers
+          </button>
         </div>
         <div className="agent-top-actions">
           <label className="agent-enable">
@@ -286,7 +294,16 @@ export function AiView({ onError }: Props) {
             />
           )}
 
-          {mode !== "mcp" && mode !== "prompts" && (
+          {mode === "providers" && (
+            <AiProvidersPanel
+              onClose={() => {
+                setMode("home");
+                void refreshMeta();
+              }}
+            />
+          )}
+
+          {mode !== "mcp" && mode !== "prompts" && mode !== "providers" && (
             <div className="agent-stage">
               <div className="agent-brand-mark">AT</div>
               <h1 className="agent-greeting">

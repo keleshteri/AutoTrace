@@ -48,12 +48,28 @@ fn default_model(kind: &str, allowed: &[String]) -> String {
         return m.clone();
     }
     match kind {
-        "anthropic" => "claude-3-5-haiku-latest".into(),
+        "anthropic" => "claude-opus-5".into(),
         "ollama" => "llama3.2".into(),
         "lmstudio" => "local-model".into(),
         "openrouter" => "openai/gpt-4o-mini".into(),
         _ => "gpt-4o-mini".into(),
     }
+}
+
+/// Join the `text` blocks of a Messages API response. Current models may put
+/// `thinking` blocks first, so `content[0]` is not necessarily text.
+fn anthropic_text(v: &serde_json::Value) -> String {
+    v.get("content")
+        .and_then(|c| c.as_array())
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
 }
 
 fn estimate_tokens(text: &str) -> i64 {
@@ -434,11 +450,10 @@ fn chat_completion(
         if !status.is_success() {
             return Err(format!("Anthropic error: {v}"));
         }
-        let text = v
-            .pointer("/content/0/text")
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .to_string();
+        if v.get("stop_reason").and_then(|r| r.as_str()) == Some("refusal") {
+            return Err("Claude declined this request (stop_reason: refusal)".into());
+        }
+        let text = anthropic_text(&v);
         let prompt_tokens = v
             .pointer("/usage/input_tokens")
             .and_then(|t| t.as_i64())
@@ -507,4 +522,32 @@ fn chat_completion(
         total_tokens: prompt_tokens + completion_tokens,
         warning: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_text_skips_thinking_blocks() {
+        let v = serde_json::json!({
+            "content": [
+                { "type": "thinking", "thinking": "" },
+                { "type": "text", "text": "Hello" },
+                { "type": "text", "text": "world" }
+            ]
+        });
+        assert_eq!(anthropic_text(&v), "Hello\nworld");
+        assert_eq!(anthropic_text(&serde_json::json!({})), "");
+    }
+
+    #[test]
+    fn loopback_urls_only() {
+        assert!(is_loopback_http_url("http://127.0.0.1:17991"));
+        assert!(is_loopback_http_url("http://localhost:17991"));
+        assert!(is_loopback_http_url("http://[::1]:17991"));
+        assert!(!is_loopback_http_url("https://127.0.0.1:17991"));
+        assert!(!is_loopback_http_url("http://127.0.0.1.evil.com"));
+        assert!(!is_loopback_http_url("http://10.0.0.5:17991"));
+    }
 }
