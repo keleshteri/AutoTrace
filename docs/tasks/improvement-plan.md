@@ -38,7 +38,8 @@ Sizes: **S** ≈ ½ day · **M** ≈ 1–3 days · **L** ≈ 1–2 weeks.
 6. **Test coverage (ongoing).** Rust tests now cover the vault, secrets, HMAC, URL and settings guards, and local API helpers. Add tests for the tagger rules, session merge/split, schema migrations (open an old DB fixture and migrate it), and profitability math. Grow the Playwright e2e suite past the timer (review queue, tagging, export).
 7. **Store integration secrets like AI keys (S).** Sync tokens (`workspaces.sync_token`) and integration `config_json` secrets (ClickUp, webhook, OAuth refresh tokens) are still plaintext in SQLite. Reuse `ai::secrets`. Longer term, move all secrets to the OS keychain (`keyring` crate).
 8. **Mutex poisoning (S).** `expect("store mutex poisoned")` everywhere means one panic in any command kills every later DB call. Recover with `lock().unwrap_or_else(|e| e.into_inner())`, or add a poisoned-state error that the UI can show.
-9. **Sidecar authentication (S).** Now opt-in and loopback-only. For defence in depth, have the app launch the sidecar itself with a per-launch shared secret, so a squatting process can't impersonate it.
+9. **Migrations swallow errors (S).** From V3 on, `store/schema.rs::migrate` runs `let _ = conn.execute_batch(MIGRATION_Vn)` and then bumps `schema_version` anyway, so a failed migration is silently marked done. Run each step in a transaction, propagate the error, and add a test that migrates an old DB fixture.
+10. **Sidecar authentication (S).** Now opt-in and loopback-only. For defence in depth, have the app launch the sidecar itself with a per-launch shared secret, so a squatting process can't impersonate it.
 
 ---
 
