@@ -54,6 +54,14 @@ Requirements:
 - **macOS:** Xcode CLT; Accessibility permission for capture
 - **Windows:** WebView2 (usually preinstalled on Win10/11)
 
+## Release notes
+
+Write `docs/releases/vX.Y.Z.md` before tagging. The Release workflow puts it at the top of the GitHub Release page, above the installer table.
+
+## Icons
+
+Installer, window, taskbar/Dock and tray icons are baked in at build time from `src-tauri/icons/`. Regenerate the whole set from the 1024 px master (`npx tauri icon src-tauri/icons/icon-1024.png`, then delete `android/` and `ios/`), and run `pnpm check:icons`. CI fails if any icon is a Tauri placeholder or has the wrong size.
+
 ## Version bumps
 
 Run the bump script (updates all three files together):

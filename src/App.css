@@ -99,9 +99,8 @@ button {
   text-transform: uppercase;
 }
 
-.brand-mark svg {
+.brand-mark img {
   flex-shrink: 0;
-  border-radius: 8px;
 }
 
 .workspace-pill {
@@ -2476,16 +2475,7 @@ button {
 }
 
 .agent-brand-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: #ede9fe;
-  background: linear-gradient(145deg, #7c3aed, #a78bfa);
+  display: block;
   margin-bottom: 20px;
 }
 

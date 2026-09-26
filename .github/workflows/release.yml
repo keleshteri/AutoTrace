@@ -120,6 +120,17 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Using release tag: ${TAG}"
 
+      - name: Release notes
+        id: notes
+        shell: bash
+        run: |
+          f="docs/releases/${{ steps.ver.outputs.tag }}.md"
+          {
+            echo "body<<NOTES_EOF"
+            if [ -f "$f" ]; then cat "$f"; echo; echo "---"; echo; fi
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build Tauri app + upload release assets
         uses: tauri-apps/tauri-action@v0
         env:
@@ -130,6 +141,7 @@ jobs:
           tagName: ${{ steps.ver.outputs.tag }}
           releaseName: AutoTrace ${{ steps.ver.outputs.tag }}
           releaseBody: |
+            ${{ steps.notes.outputs.body }}
             ## Installers
 
             Download the asset for your OS below.

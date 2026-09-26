@@ -1,7 +1,7 @@
 {
   "name": "autotrace",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Privacy-first local-only automatic time tracker",
   "type": "module",
   "scripts": {
@@ -15,6 +15,7 @@
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
     "check:ipc": "node scripts/check-ipc.mjs",
+    "check:icons": "node scripts/check-icons.mjs",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
