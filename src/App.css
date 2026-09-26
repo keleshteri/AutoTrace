@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
+/* Plus Jakarta Sans is bundled locally (see main.tsx) — no third-party font requests. */
 
 :root {
   --bg: #070708;
@@ -10,6 +10,7 @@
   --border: #26262e;
   --border-subtle: #1c1c22;
   --ink: #f4f4f5;
+  --text: var(--ink);
   --muted: #8b8b96;
   --muted-2: #5c5c68;
   --accent: #7c5cfa;
@@ -3237,4 +3238,169 @@ button {
 .nav-item.nested {
   padding-left: 28px;
   font-size: 12px;
+}
+
+/* ---------- Vault unlock screen ---------- */
+.vault-gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.vault-card {
+  width: min(400px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 28px;
+}
+
+.vault-card h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.vault-card p {
+  margin: 0;
+}
+
+.vault-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.vault-field input {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.vault-error {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- AI providers panel ---------- */
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.ai-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-notice {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.ai-notice-error {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger);
+}
+
+.ai-provider-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-provider-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.ai-provider-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-pill {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.ai-pill-muted {
+  background: var(--bg-hover);
+  color: var(--muted);
+}
+
+.ai-provider-form,
+.ai-budget-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.ai-budget-grid {
+  grid-template-columns: 1fr auto 1fr auto;
+  align-items: end;
+}
+
+.ai-provider-form label,
+.ai-budget-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.ai-provider-form input,
+.ai-provider-form select,
+.ai-budget-grid input {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.ai-provider-form .ai-check {
+  flex-direction: row;
+  align-items: center;
+}
+
+@media (max-width: 720px) {
+  .ai-budget-grid {
+    grid-template-columns: 1fr auto;
+  }
 }

@@ -406,15 +406,23 @@ pub fn export_csv_for_day(state: State<'_, AppState>, day: String) -> Result<Str
         .map_err(|e| e.to_string())
 }
 
-/// Initialize store + tracker once the Tauri app handle is available.
-pub fn init_state(app: &AppHandle) -> Result<AppState, String> {
+/// Where the SQLite file (and its encrypted vault) live. Managed even while
+/// the database is locked so the unlock screen can find it.
+pub struct DbLocation {
+    pub db_path: std::path::PathBuf,
+}
+
+pub fn resolve_db_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let app_data = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("resolve app data dir: {e}"))?;
+    Ok(Store::default_db_path(&app_data))
+}
 
-    let db_path = Store::default_db_path(&app_data);
-    let store = Arc::new(Store::open(&db_path).map_err(|e| e.to_string())?);
+/// Initialize store + tracker for an unlocked database.
+pub fn init_state(db_path: &std::path::Path) -> Result<AppState, String> {
+    let store = Arc::new(Store::open(db_path).map_err(|e| e.to_string())?);
     // Leftover active focus from a previous process must not keep accruing.
     let _ = store.reconcile_stale_focus_on_launch();
     let tracker = Arc::new(TrackerHandle::start(Arc::clone(&store)));
@@ -1008,6 +1016,19 @@ pub fn export_sync_pack(state: State<'_, AppState>) -> Result<String, String> {
     state.store.export_sync_pack().map_err(|e| e.to_string())
 }
 
+/// The bearer token rides along, so only https (or this machine) is allowed.
+fn check_sync_url(url: &str) -> Result<(), String> {
+    let ok = reqwest::Url::parse(url)
+        .map(|u| u.scheme() == "https")
+        .unwrap_or(false)
+        || crate::ai::gateway::is_loopback_http_url(url);
+    if ok {
+        Ok(())
+    } else {
+        Err("sync URL must start with https:// (http is only allowed for 127.0.0.1/localhost)".into())
+    }
+}
+
 #[tauri::command]
 pub fn push_sync_pack(state: State<'_, AppState>, workspace_id: i64) -> Result<String, String> {
     let pack = state.store.export_sync_pack().map_err(|e| e.to_string())?;
@@ -1020,6 +1041,7 @@ pub fn push_sync_pack(state: State<'_, AppState>, workspace_id: i64) -> Result<S
         .sync_url
         .filter(|u| !u.is_empty())
         .ok_or_else(|| "set a sync URL on the workspace first".to_string())?;
+    check_sync_url(&url)?;
     let token = state
         .store
         .workspace_sync_token(workspace_id)
@@ -1054,6 +1076,7 @@ pub fn pull_sync_pack(state: State<'_, AppState>, workspace_id: i64) -> Result<i
         .sync_url
         .filter(|u| !u.is_empty())
         .ok_or_else(|| "set a sync URL on the workspace first".to_string())?;
+    check_sync_url(&url)?;
     let token = state
         .store
         .workspace_sync_token(workspace_id)
@@ -1105,12 +1128,23 @@ pub fn distraction_report(
         .map_err(|e| e.to_string())
 }
 
+/// Only well-formed https:// links may be handed to the OS opener.
+fn validate_external_url(raw: &str) -> Result<String, String> {
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| "invalid URL".to_string())?;
+    if url.scheme() != "https" || url.host_str().map(|h| h.is_empty()).unwrap_or(true) {
+        return Err("only https:// links can be opened".into());
+    }
+    Ok(url.to_string())
+}
+
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
+    let url = validate_external_url(&url)?;
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &url])
+        // No `cmd /C start`: cmd would interpret `&`, `|`, `^` in the URL.
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &url])
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -1249,8 +1283,31 @@ pub fn delete_block_rule(state: State<'_, AppState>, id: i64) -> Result<(), Stri
     state.store.delete_block_rule(id).map_err(|e| e.to_string())
 }
 
+/// Settings the backend owns; the UI must never overwrite them directly.
+const PROTECTED_SETTINGS: &[&str] = &["schema_version", "db_encryption", "last_break_at"];
+
+fn check_setting_write(key: &str, value: &str) -> Result<(), String> {
+    let well_formed = !key.is_empty()
+        && key.len() <= 64
+        && key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if !well_formed {
+        return Err(format!("invalid setting key: {key:?}"));
+    }
+    if PROTECTED_SETTINGS.contains(&key) {
+        return Err(format!("setting {key} is managed by AutoTrace"));
+    }
+    if key == "ai_sidecar_url" && !value.is_empty() && !crate::ai::gateway::is_loopback_http_url(value) {
+        return Err("AI sidecar URL must be http://127.0.0.1, http://localhost or http://[::1]".into());
+    }
+    if value.len() > 64 * 1024 {
+        return Err("setting value too large".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_feature_flag(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+    check_setting_write(&key, &value)?;
     state.store.set_setting(&key, &value).map_err(|e| e.to_string())
 }
 
@@ -1259,30 +1316,68 @@ pub fn get_feature_flag(state: State<'_, AppState>, key: String) -> Result<Optio
     state.store.get_setting(&key).map_err(|e| e.to_string())
 }
 
+/// Encrypt the DB at rest. Stops tracking, closes the SQLite file, encrypts
+/// it, then quits; the next launch asks for the passphrase before opening.
 #[tauri::command]
-pub fn lock_database(state: State<'_, AppState>, passphrase: String) -> Result<(), String> {
+pub fn lock_database(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    passphrase: String,
+) -> Result<(), String> {
+    crate::vault::validate_passphrase(&passphrase).map_err(|e| e.to_string())?;
     let path = state.store.path().to_path_buf();
-    // At-rest: encrypt to .db.vault and remove plaintext DB + WAL/SHM. Unlock before next launch.
-    crate::vault::lock_database(&path, &passphrase, true).map_err(|e| e.to_string())?;
+
+    let _ = state.store.pause_focus();
     let _ = state.store.log_privacy_event("vault_lock", Some("database encrypted at rest"));
     state
         .store
         .set_setting("db_encryption", "1")
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.tracker.stop();
+    state.local_api.stop();
+    state.store.close_file().map_err(|e| e.to_string())?;
+
+    if let Err(e) = crate::vault::lock_database(&path, &passphrase) {
+        let _ = state.store.reopen_file();
+        let _ = state.store.set_setting("db_encryption", "0");
+        return Err(format!("{e}. Tracking is paused — restart AutoTrace to resume."));
+    }
+
+    // Give the UI a moment to show the confirmation, then quit.
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        app.exit(0);
+    });
+    Ok(())
+}
+
+/// Decrypt the vault at launch, then start the store + tracker.
+#[tauri::command]
+pub fn unlock_database(
+    app: AppHandle,
+    location: State<'_, DbLocation>,
+    passphrase: String,
+) -> Result<(), String> {
+    if app.try_state::<AppState>().is_some() {
+        return Err("database is already unlocked".into());
+    }
+    crate::vault::unlock_database(&location.db_path, &passphrase).map_err(|e| e.to_string())?;
+    let state = init_state(&location.db_path)?;
+    let _ = state.store.set_setting("db_encryption", "0");
+    let _ = state.store.log_privacy_event("vault_unlock", Some("database decrypted"));
+    app.manage(state);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn unlock_database(state: State<'_, AppState>, passphrase: String) -> Result<(), String> {
-    let path = state.store.path().to_path_buf();
-    crate::vault::unlock_database(&path, &passphrase).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn vault_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let path = state.store.path().to_path_buf();
+pub fn vault_status(app: AppHandle, location: State<'_, DbLocation>) -> Result<serde_json::Value, String> {
+    let db_encryption = app
+        .try_state::<AppState>()
+        .and_then(|s| s.store.get_setting("db_encryption").ok().flatten());
     Ok(serde_json::json!({
-        "vault_exists": crate::vault::vault_exists(&path),
-        "db_encryption": state.store.get_setting("db_encryption").ok().flatten(),
+        "vault_exists": crate::vault::vault_exists(&location.db_path),
+        "locked": crate::vault::is_locked(&location.db_path),
+        "db_encryption": db_encryption,
     }))
 }
 
@@ -1616,20 +1711,66 @@ pub fn run_ai_agent(
 
 #[tauri::command]
 pub fn ai_sidecar_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let enabled = state.store.get_setting("ai_sidecar_enabled").ok().flatten().as_deref() == Some("1");
     let url = state
         .store
         .get_setting("ai_sidecar_url")
         .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| "http://127.0.0.1:17991".into());
-    let healthy = reqwest::blocking::Client::new()
-        .get(format!("{}/health", url.trim_end_matches('/')))
-        .timeout(std::time::Duration::from_millis(500))
-        .send()
-        .map(|r| r.status().is_success())
-        .unwrap_or(false);
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| crate::ai::gateway::DEFAULT_SIDECAR_URL.into());
+    let loopback = crate::ai::gateway::is_loopback_http_url(&url);
+    let healthy = enabled
+        && loopback
+        && reqwest::blocking::Client::new()
+            .get(format!("{}/health", url.trim_end_matches('/')))
+            .timeout(std::time::Duration::from_millis(500))
+            .send()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
     Ok(serde_json::json!({
         "url": url,
+        "enabled": enabled,
+        "loopback": loopback,
         "healthy": healthy,
         "ai_enabled": state.store.ai_enabled(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_urls_must_be_https() {
+        assert!(validate_external_url("https://github.com/keleshteri/AutoTrace").is_ok());
+        assert!(validate_external_url("http://example.com").is_err());
+        assert!(validate_external_url("file:///etc/passwd").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+        assert!(validate_external_url("not a url").is_err());
+    }
+
+    #[test]
+    fn external_urls_are_normalized() {
+        // Passed as a single argv entry (no shell), so only normalization matters.
+        let out = validate_external_url(" https://example.com/a b\"c ").unwrap();
+        assert_eq!(out, "https://example.com/a%20b%22c");
+    }
+
+    #[test]
+    fn setting_writes_are_guarded() {
+        assert!(check_setting_write("break_every_mins", "50").is_ok());
+        assert!(check_setting_write("db_encryption", "0").is_err());
+        assert!(check_setting_write("schema_version", "1").is_err());
+        assert!(check_setting_write("Bad Key", "1").is_err());
+        assert!(check_setting_write("ai_sidecar_url", "http://127.0.0.1:17991").is_ok());
+        assert!(check_setting_write("ai_sidecar_url", "https://evil.example").is_err());
+    }
+
+    #[test]
+    fn sync_urls_require_tls_off_machine() {
+        assert!(check_sync_url("https://sync.example.com").is_ok());
+        assert!(check_sync_url("http://127.0.0.1:8787").is_ok());
+        assert!(check_sync_url("http://sync.example.com").is_err());
+        assert!(check_sync_url("ftp://x").is_err());
+    }
 }

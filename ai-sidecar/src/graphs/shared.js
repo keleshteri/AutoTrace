@@ -9,7 +9,8 @@ export function makeModel(provider, model) {
       model,
       apiKey: provider.api_key,
       maxTokens: provider.max_tokens,
-      temperature: provider.temperature,
+      // Current Claude models reject sampling params; null makes LangChain omit it.
+      temperature: null,
     });
   }
   return new ChatOpenAI({
@@ -50,10 +51,14 @@ export async function runSimpleGraph(opts) {
       new SystemMessage(sys),
       new HumanMessage(state.prompt),
     ]);
+    // Block content (e.g. thinking + text): keep only the text the user should see.
     const text =
       typeof resp.content === "string"
         ? resp.content
-        : JSON.stringify(resp.content);
+        : resp.content
+            .filter((b) => b?.type === "text")
+            .map((b) => b.text)
+            .join("\n");
     const usage = resp.usage_metadata || {};
     return {
       text,

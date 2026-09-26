@@ -48,12 +48,28 @@ fn default_model(kind: &str, allowed: &[String]) -> String {
         return m.clone();
     }
     match kind {
-        "anthropic" => "claude-3-5-haiku-latest".into(),
+        "anthropic" => "claude-opus-5".into(),
         "ollama" => "llama3.2".into(),
         "lmstudio" => "local-model".into(),
         "openrouter" => "openai/gpt-4o-mini".into(),
         _ => "gpt-4o-mini".into(),
     }
+}
+
+/// Join the `text` blocks of a Messages API response. Current models may put
+/// `thinking` blocks first, so `content[0]` is not necessarily text.
+fn anthropic_text(v: &serde_json::Value) -> String {
+    v.get("content")
+        .and_then(|c| c.as_array())
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
 }
 
 fn estimate_tokens(text: &str) -> i64 {
@@ -139,17 +155,11 @@ pub fn run_agent(store: &Store, req: AgentRequest) -> Result<AiRunResult, String
     ensure_model_allowed(&provider, &model)?;
     let key = provider_api_key(store, enc.as_deref())?;
 
-    // Prefer LangGraph sidecar when healthy; otherwise run in-process completion.
-    let sidecar = store
-        .get_setting("ai_sidecar_url")
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "http://127.0.0.1:17991".into());
-
-    let result = if sidecar_healthy(&sidecar) {
-        run_via_sidecar(store, &sidecar, &provider, &key, &model, &req)?
-    } else {
-        run_local_fallback(store, &provider, &key, &model, &req)?
+    // The sidecar receives the provider API key, so it is only used when the
+    // user opted in and it lives on loopback; otherwise run in-process.
+    let result = match sidecar_url(store).filter(|u| sidecar_healthy(u)) {
+        Some(sidecar) => run_via_sidecar(store, &sidecar, &provider, &key, &model, &req)?,
+        None => run_local_fallback(store, &provider, &key, &model, &req)?,
     };
 
     let _ = store.record_ai_usage(
@@ -182,6 +192,32 @@ pub fn run_agent(store: &Store, req: AgentRequest) -> Result<AiRunResult, String
     })
 }
 
+pub const DEFAULT_SIDECAR_URL: &str = "http://127.0.0.1:17991";
+
+/// Plain-http is acceptable only when the peer is this machine.
+pub fn is_loopback_http_url(raw: &str) -> bool {
+    reqwest::Url::parse(raw)
+        .map(|u| {
+            u.scheme() == "http"
+                && matches!(u.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]"))
+        })
+        .unwrap_or(false)
+}
+
+/// Configured sidecar URL, or None unless `ai_sidecar_enabled` is on and the URL is loopback.
+pub fn sidecar_url(store: &Store) -> Option<String> {
+    if store.get_setting("ai_sidecar_enabled").ok().flatten().as_deref() != Some("1") {
+        return None;
+    }
+    let url = store
+        .get_setting("ai_sidecar_url")
+        .ok()
+        .flatten()
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| DEFAULT_SIDECAR_URL.into());
+    is_loopback_http_url(&url).then_some(url)
+}
+
 fn sidecar_healthy(base: &str) -> bool {
     let url = format!("{}/health", base.trim_end_matches('/'));
     reqwest::blocking::Client::new()
@@ -200,23 +236,18 @@ fn run_via_sidecar(
     model: &str,
     req: &AgentRequest,
 ) -> Result<AiRunResult, String> {
-    let local_token = store
-        .list_integrations()
+    let (local_base, local_token) = store
+        .get_integration_by_kind("local_api")
         .ok()
-        .and_then(|rows| {
-            rows.into_iter()
-                .find(|i| i.kind == "local_api" && i.enabled)
-                .and_then(|i| {
-                    serde_json::from_str::<serde_json::Value>(&i.config_json)
-                        .ok()
-                        .and_then(|v| {
-                            v.get("token")
-                                .and_then(|t| t.as_str())
-                                .map(|s| s.to_string())
-                        })
-                })
+        .flatten()
+        .filter(|row| row.enabled)
+        .map(|row| {
+            (
+                crate::integrations::local_api::base_url_from_config(&row.config_json),
+                crate::integrations::local_api::token_from_config(&row.config_json),
+            )
         })
-        .unwrap_or_default();
+        .unwrap_or_else(|| (String::new(), String::new()));
 
     let body = serde_json::json!({
         "agent": req.agent,
@@ -234,7 +265,7 @@ fn run_via_sidecar(
             "temperature": provider.temperature_cap.min(1.0),
         },
         "local_api": {
-            "base": "http://127.0.0.1:17890",
+            "base": local_base,
             "token": local_token,
         },
         "privacy": {
@@ -419,11 +450,10 @@ fn chat_completion(
         if !status.is_success() {
             return Err(format!("Anthropic error: {v}"));
         }
-        let text = v
-            .pointer("/content/0/text")
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .to_string();
+        if v.get("stop_reason").and_then(|r| r.as_str()) == Some("refusal") {
+            return Err("Claude declined this request (stop_reason: refusal)".into());
+        }
+        let text = anthropic_text(&v);
         let prompt_tokens = v
             .pointer("/usage/input_tokens")
             .and_then(|t| t.as_i64())
@@ -492,4 +522,32 @@ fn chat_completion(
         total_tokens: prompt_tokens + completion_tokens,
         warning: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_text_skips_thinking_blocks() {
+        let v = serde_json::json!({
+            "content": [
+                { "type": "thinking", "thinking": "" },
+                { "type": "text", "text": "Hello" },
+                { "type": "text", "text": "world" }
+            ]
+        });
+        assert_eq!(anthropic_text(&v), "Hello\nworld");
+        assert_eq!(anthropic_text(&serde_json::json!({})), "");
+    }
+
+    #[test]
+    fn loopback_urls_only() {
+        assert!(is_loopback_http_url("http://127.0.0.1:17991"));
+        assert!(is_loopback_http_url("http://localhost:17991"));
+        assert!(is_loopback_http_url("http://[::1]:17991"));
+        assert!(!is_loopback_http_url("https://127.0.0.1:17991"));
+        assert!(!is_loopback_http_url("http://127.0.0.1.evil.com"));
+        assert!(!is_loopback_http_url("http://10.0.0.5:17991"));
+    }
 }

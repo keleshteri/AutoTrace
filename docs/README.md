@@ -12,7 +12,7 @@
 | [decisions/](decisions/) | Locked decisions and the stack-choice rationale |
 | [privacy/](privacy/) | What's tracked, what never is, and how opt-in integrations / AI work |
 | [timeline/](timeline/) | Phased roadmap |
-| [tasks/](tasks/) | Backlog beyond MVP |
+| [tasks/](tasks/) | Backlog beyond MVP · [improvement plan](tasks/improvement-plan.md) |
 
 ## Start here
 

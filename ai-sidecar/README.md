@@ -15,7 +15,7 @@ Or from repo root: `pnpm ai:sidecar:install` then `pnpm ai:sidecar`.
 
 Plain Node ESM + LangGraph.js (no TypeScript build step).
 
-Then enable AI in the app and add a provider. The Rust gateway uses this sidecar when `/health` succeeds; otherwise it falls back to in-process completions.
+Then enable AI in the app, add a provider, and tick **Sidecar** in the AI view. The Rust gateway forwards your provider API key to the sidecar, so it only does so when that toggle is on **and** the sidecar URL is loopback (`127.0.0.1`, `localhost`, `[::1]`) and `/health` succeeds. Otherwise it runs completions in-process.
 
 ## Endpoints
 

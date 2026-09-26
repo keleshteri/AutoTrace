@@ -6,7 +6,7 @@
 //! - Local API binds to 127.0.0.1 only
 
 mod clickup;
-mod local_api;
+pub(crate) mod local_api;
 mod webhook;
 
 use serde::{Deserialize, Serialize};

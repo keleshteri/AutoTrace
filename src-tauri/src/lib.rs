@@ -22,8 +22,13 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let state = commands::init_state(app.handle())?;
-            app.manage(state);
+            let db_path = commands::resolve_db_path(app.handle())?;
+            // Locked vault: the UI shows the unlock screen, and `unlock_database`
+            // manages AppState once the passphrase is accepted.
+            if !vault::is_locked(&db_path) {
+                app.manage(commands::init_state(&db_path)?);
+            }
+            app.manage(commands::DbLocation { db_path });
             tray::setup_tray(app.handle())?;
             Ok(())
         })

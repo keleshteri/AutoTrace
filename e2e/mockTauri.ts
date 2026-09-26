@@ -105,7 +105,7 @@ export function mockTauriInitScript(): string {
       case "list_pending_sessions":
         return [];
       case "vault_status":
-        return { vault_exists: false, db_encryption: null };
+        return { vault_exists: false, locked: false, db_encryption: null };
       case "start_focus": {
         const kind = (args.kind || "focus").toLowerCase();
         const mins = args.durationMins ?? (kind === "break" ? 5 : 50);
