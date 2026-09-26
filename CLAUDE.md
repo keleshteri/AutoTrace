@@ -25,6 +25,7 @@ pnpm install                 # deps (SessionStart hook does this automatically)
 npx tsc --noEmit             # typecheck (pnpm build runs tsc + vite build)
 pnpm test:unit               # vitest (jsdom)
 node scripts/check-ipc.mjs   # Rust commands ↔ lib.rs ↔ api.ts ↔ e2e mock stay in sync
+pnpm check:icons             # desktop icons: right sizes, complete .ico/.icns, no Tauri placeholders
 cd src-tauri && cargo check --all-targets && cargo test --lib
 pnpm test:e2e                # Playwright against the mocked IPC
 pnpm tauri:dev               # run the desktop app
@@ -40,6 +41,10 @@ CI (`.github/workflows/ci.yml`) runs build + unit tests + `cargo check`/`cargo t
 - Style: CSS variables in `src/App.css` (`--bg-*`, `--text`, `--muted`, `--accent*`, `--danger`, `--radius*`). Prefer classes over new inline `style={{}}`.
 - Settings are key/value rows (`settings` table) read via `get_setting` / written via `set_feature_flag`. Keys are `[a-z0-9_]`; `schema_version`, `db_encryption`, `last_break_at` are backend-owned.
 - Schema changes: add a new `MIGRATION_Vn` const in `store/schema.rs`, a matching `if current < n` step in `migrate()`, and bump `SCHEMA_VERSION`. Never edit a shipped step. Propagate errors with `?` (older steps use `let _ =`, which hides failures).
+
+## Icons
+
+All desktop icons in `src-tauri/icons/` are generated from `src-tauri/icons/icon-1024.png` with `npx tauri icon src-tauri/icons/icon-1024.png` (delete the `android/` and `ios/` output). Never hand-edit or partially replace them: v0.1.1 shipped Tauri's placeholder `.ico`/`.icns` because only `icon.png` was swapped. The in-app logo (`AutoTraceLogo`) uses `src/assets/autotrace-icon-128.png`; web icons live in `public/`.
 
 ## Security invariants (do not regress)
 

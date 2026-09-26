@@ -13,6 +13,7 @@
       "Bash(npx vitest run *)",
       "Bash(node scripts/check-ipc.mjs)",
       "Bash(pnpm check:ipc)",
+      "Bash(pnpm check:icons)",
       "Bash(cargo check *)",
       "Bash(cargo test *)",
       "Bash(cargo fmt *)",

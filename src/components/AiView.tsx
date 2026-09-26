@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AiProvidersPanel } from "./AiProvidersPanel";
+import { AutoTraceLogo } from "./AutoTraceLogo";
 import {
   AiChat,
   AiMessage,
@@ -305,7 +306,7 @@ export function AiView({ onError }: Props) {
 
           {mode !== "mcp" && mode !== "prompts" && mode !== "providers" && (
             <div className="agent-stage">
-              <div className="agent-brand-mark">AT</div>
+              <AutoTraceLogo size={40} className="agent-brand-mark" />
               <h1 className="agent-greeting">
                 {greet} {statusName()}
               </h1>

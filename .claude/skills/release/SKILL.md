@@ -14,7 +14,7 @@ Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds Window
 - Must be on `main`, up to date with `origin/main`, clean working tree, and CI green on the head commit.
 - Run the local checks:
   ```bash
-  node scripts/check-ipc.mjs && npx tsc --noEmit && pnpm test:unit && pnpm build
+  pnpm check:ipc && pnpm check:icons && npx tsc --noEmit && pnpm test:unit && pnpm build
   (cd src-tauri && cargo test --lib)
   ```
 
@@ -38,12 +38,12 @@ This updates `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.to
 
 ## 4. Release notes
 
-Draft from the commit log, grouped as **Highlights · Fixes · Security · Breaking / action needed · Known issues**. Write for users, not developers. Include the "action needed" steps for integrators (for example, "verify `X-AutoTrace-Signature-256`"). Show the draft to the user.
+Write `docs/releases/vX.Y.Z.md` (the Release workflow puts it at the top of the GitHub Release page). Draft it from the commit log, grouped as **Highlights · Fixes · Security · Breaking / action needed · Known issues**. Write for users, not developers. Include the "action needed" steps for integrators (for example, "verify `X-AutoTrace-Signature-256`"). Show the draft to the user.
 
 ## 5. Commit, then confirm, then tag
 
 ```bash
-git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock docs/releases/vX.Y.Z.md
 git commit -m "chore: release vX.Y.Z"
 git push origin main
 ```
@@ -58,5 +58,4 @@ git push origin vX.Y.Z
 ## 6. After
 
 - Watch **Actions → Release** until all four platform jobs pass. If one fails, report it; don't re-tag the same version.
-- Paste the notes into the GitHub Release body.
 - Remind the user that unsigned builds trigger SmartScreen/Gatekeeper warnings (signing is on the roadmap).
