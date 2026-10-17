@@ -917,6 +917,7 @@ export function SettingsView({
 
 function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
   const [pass, setPass] = useState("");
+  const [passConfirm, setPassConfirm] = useState("");
   const [blockPat, setBlockPat] = useState("");
   const [matchField, setMatchField] = useState("app");
   const [threshold, setThreshold] = useState("60");
@@ -1065,46 +1066,59 @@ function Phase4Extras({ onError }: { onError: (msg: string | null) => void }) {
       <div className="card" style={{ marginTop: 12 }}>
         <p className="kicker">Database encryption (opt-in)</p>
         <p className="muted">
-          Encrypts the SQLite file at rest (AES-256-GCM + Argon2). Locking removes the
-          plaintext DB (+ WAL/SHM). Unlock before the next launch.
-          {vault?.vault_exists ? " Vault file present." : ""}
+          Encrypts the SQLite file at rest (AES-256-GCM + Argon2id) and removes the plaintext copy.
+          AutoTrace stops tracking and closes; on the next launch it asks for this passphrase.
+          <strong> There is no recovery if you forget it.</strong>
+          {vault?.vault_exists ? " A vault file is present." : ""}
         </p>
         <div className="mini-form" style={{ marginTop: 10 }}>
           <input
             type="password"
+            autoComplete="new-password"
             value={pass}
             onChange={(e) => setPass(e.target.value)}
             placeholder="Passphrase (8+ chars)"
+            aria-label="Passphrase"
+          />
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={passConfirm}
+            onChange={(e) => setPassConfirm(e.target.value)}
+            placeholder="Confirm passphrase"
+            aria-label="Confirm passphrase"
           />
           <button
             type="button"
             className="btn"
-            onClick={() =>
+            disabled={pass.length < 8 || pass !== passConfirm}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  "Encrypt your database now? AutoTrace will close and ask for this passphrase next time it starts.",
+                )
+              ) {
+                return;
+              }
               void api
                 .lockDatabase(pass)
-                .then(() =>
-                  window.alert(
-                    "Database encrypted at rest. Unlock with the same passphrase before relaunching.",
-                  ),
-                )
-                .catch((e) => onError(String(e)))
-            }
+                .then(() => {
+                  setPass("");
+                  setPassConfirm("");
+                  window.alert("Database encrypted. AutoTrace will now close.");
+                })
+                .catch((e) => onError(String(e)));
+            }}
           >
-            Lock / encrypt at rest
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() =>
-              void api
-                .unlockDatabase(pass)
-                .then(() => window.alert("Unlocked to DB path — relaunch if needed"))
-                .catch((e) => onError(String(e)))
-            }
-          >
-            Unlock
+            Encrypt &amp; close
           </button>
         </div>
+        {pass.length > 0 && pass.length < 8 && (
+          <p className="muted">Use at least 8 characters.</p>
+        )}
+        {passConfirm.length > 0 && pass !== passConfirm && (
+          <p className="muted">Passphrases don’t match.</p>
+        )}
       </div>
     </>
   );

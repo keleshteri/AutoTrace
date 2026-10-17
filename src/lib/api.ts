@@ -554,7 +554,9 @@ export const api = {
   unlockDatabase: (passphrase: string) =>
     invoke<void>("unlock_database", { passphrase }),
   vaultStatus: () =>
-    invoke<{ vault_exists: boolean; db_encryption: string | null }>("vault_status"),
+    invoke<{ vault_exists: boolean; locked: boolean; db_encryption: string | null }>(
+      "vault_status",
+    ),
   oauthAuthorizeUrl: (provider: string, clientId: string, redirectUri: string) =>
     invoke<string>("oauth_authorize_url", { provider, clientId, redirectUri }),
   oauthExchangeCode: (payload: {
@@ -656,9 +658,13 @@ export const api = {
       day: payload.day ?? null,
     }),
   aiSidecarStatus: () =>
-    invoke<{ url: string; healthy: boolean; ai_enabled: boolean }>(
-      "ai_sidecar_status",
-    ),
+    invoke<{
+      url: string;
+      enabled: boolean;
+      loopback: boolean;
+      healthy: boolean;
+      ai_enabled: boolean;
+    }>("ai_sidecar_status"),
 };
 
 export type AiProvider = {

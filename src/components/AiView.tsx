@@ -1,4 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AiProvidersPanel } from "./AiProvidersPanel";
+import { AutoTraceLogo } from "./AutoTraceLogo";
 import {
   AiChat,
   AiMessage,
@@ -12,7 +14,7 @@ import { analyticsApi, MentionItem, PERIODS } from "../lib/analyticsApi";
 
 type Props = { onError: (msg: string | null) => void };
 
-type AgentMode = "home" | "history" | "mcp" | "prompts";
+type AgentMode = "home" | "history" | "mcp" | "prompts" | "providers";
 
 const QUICK: { id: string; label: string; prompt: string; agent: string; day?: boolean }[] = [
   {
@@ -68,6 +70,7 @@ export function AiView({ onError }: Props) {
   const [mentionPeriod, setMentionPeriod] = useState("month");
   const [ctxPreview, setCtxPreview] = useState<Record<string, unknown> | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [sidecar, setSidecar] = useState<{ enabled: boolean; healthy: boolean } | null>(null);
 
   const day = todayLocal();
   const greet = useMemo(() => greetingName(), []);
@@ -84,6 +87,7 @@ export function AiView({ onError }: Props) {
       setChats(chatsList);
       setTemplates(tpls);
       setApiStatus(local);
+      setSidecar(await api.aiSidecarStatus().catch(() => null));
       if (!chatId && chatsList[0]) setChatId(chatsList[0].id);
       onError(null);
     } catch (e) {
@@ -269,6 +273,13 @@ export function AiView({ onError }: Props) {
           >
             <PromptsIcon /> Prompts
           </button>
+          <button
+            type="button"
+            className={mode === "providers" ? "active" : undefined}
+            onClick={() => setMode(mode === "providers" ? "home" : "providers")}
+          >
+            <GearIcon /> Providers
+          </button>
         </div>
         <div className="agent-top-actions">
           <label className="agent-enable">
@@ -282,6 +293,27 @@ export function AiView({ onError }: Props) {
               }}
             />
             AI on
+          </label>
+          <label
+            className="agent-enable"
+            title="Route requests through the local LangGraph sidecar (pnpm ai:sidecar). It receives your provider API key, so it only runs on 127.0.0.1 and only when enabled here."
+          >
+            <input
+              type="checkbox"
+              checked={sidecar?.enabled ?? false}
+              onChange={(e) => {
+                const v = e.target.checked;
+                void api
+                  .setFeatureFlag("ai_sidecar_enabled", v ? "1" : "0")
+                  .then(() => api.aiSidecarStatus())
+                  .then(setSidecar)
+                  .catch((err) => onError(String(err)));
+              }}
+            />
+            Sidecar
+            {sidecar?.enabled && (
+              <span className="muted">{sidecar.healthy ? " · running" : " · not running"}</span>
+            )}
           </label>
         </div>
       </div>
@@ -342,9 +374,18 @@ export function AiView({ onError }: Props) {
             />
           )}
 
-          {mode !== "mcp" && mode !== "prompts" && (
+          {mode === "providers" && (
+            <AiProvidersPanel
+              onClose={() => {
+                setMode("home");
+                void refreshMeta();
+              }}
+            />
+          )}
+
+          {mode !== "mcp" && mode !== "prompts" && mode !== "providers" && (
             <div className="agent-stage">
-              <div className="agent-brand-mark">AT</div>
+              <AutoTraceLogo size={40} className="agent-brand-mark" />
               <h1 className="agent-greeting">
                 {greet} {statusName()}
               </h1>

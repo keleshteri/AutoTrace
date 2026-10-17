@@ -1,6 +1,6 @@
 # Backlog
 
-See [prd/mvp.md](../prd/mvp.md) for the MVP checklist. Phases 1–4 product scope is complete; remaining items are polish / ops.
+See [prd/mvp.md](../prd/mvp.md) for the MVP checklist and [improvement-plan.md](improvement-plan.md) for the current quality / UI-UX roadmap. Phases 1–4 product scope is complete; remaining items are polish / ops.
 
 ## P1 — Phase 2 (smart tagging + focus) — done
 

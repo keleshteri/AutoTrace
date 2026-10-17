@@ -31,3 +31,7 @@ playwright-report/
 test-results/
 blob-report/
 .playwright/
+
+# Claude Code personal overrides (team config in .claude/settings.json is committed)
+CLAUDE.local.md
+.claude/settings.local.json
