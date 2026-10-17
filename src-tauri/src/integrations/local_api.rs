@@ -120,7 +120,10 @@ impl LocalApiHandle {
                                 {"name": "day_report", "description": "Aggregated day report", "input": {"day": "YYYY-MM-DD"}},
                                 {"name": "profitability", "description": "Utilization and revenue for a range", "input": {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}},
                                 {"name": "export_sync_pack", "description": "Export hierarchy sync pack JSON"},
-                                {"name": "distraction_report", "description": "Context-switch score for a day", "input": {"day": "YYYY-MM-DD"}}
+                                {"name": "distraction_report", "description": "Context-switch score for a day", "input": {"day": "YYYY-MM-DD"}},
+                                {"name": "query_time", "description": "Pivot tracked time over a range", "input": {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "rows_by": "project", "cols_by": "day"}},
+                                {"name": "list_dashboards", "description": "List saved dashboards"},
+                                {"name": "get_dashboard", "description": "Run a saved dashboard", "input": {"id": 1}}
                             ],
                             "protocol": "MCP JSON-RPC 2.0 via POST /v1/mcp"
                         }),
@@ -335,6 +338,36 @@ fn handle_mcp_jsonrpc(store: &Store, parsed: &serde_json::Value) -> Response<Cur
                         "properties": { "day": { "type": "string" } },
                         "required": ["day"]
                     }
+                },
+                {
+                    "name": "query_time",
+                    "description": "Pivot tracked time over a date range. Dimensions: none, client, project, task, category, app, domain, billable, status, day, week, month, weekday, hour. Durations are seconds.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "from": { "type": "string", "description": "YYYY-MM-DD inclusive" },
+                            "to": { "type": "string", "description": "YYYY-MM-DD inclusive" },
+                            "rows_by": { "type": "string" },
+                            "cols_by": { "type": "string" },
+                            "filters": { "type": "array", "items": { "type": "object", "properties": { "dim": { "type": "string" }, "values": { "type": "array", "items": { "type": "string" } } } } },
+                            "compare_previous": { "type": "boolean" }
+                        },
+                        "required": ["from", "to"]
+                    }
+                },
+                {
+                    "name": "list_dashboards",
+                    "description": "List saved dashboards (name, period, grouping)",
+                    "inputSchema": { "type": "object", "properties": {} }
+                },
+                {
+                    "name": "get_dashboard",
+                    "description": "Run a saved dashboard for its current period and return the pivot",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "id": { "type": "integer" } },
+                        "required": ["id"]
+                    }
                 }
             ]
         })),
@@ -412,6 +445,39 @@ fn call_mcp_tool(
                 .distraction_report(day)
                 .map(|r| serde_json::to_value(r).unwrap_or_default())
                 .map_err(|e| e.to_string())
+        }
+        "query_time" => {
+            let q: crate::store::query::TimeQuery =
+                serde_json::from_value(args.clone()).map_err(|e| format!("invalid query: {e}"))?;
+            store
+                .run_time_query(&q)
+                .map(|r| serde_json::to_value(r).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "list_dashboards" => store
+            .list_dashboards()
+            .map(|ds| {
+                serde_json::json!(ds
+                    .iter()
+                    .map(|d| serde_json::json!({
+                        "id": d.id,
+                        "name": d.name,
+                        "description": d.description,
+                        "period": d.period,
+                        "rows_by": d.query.rows_by,
+                        "cols_by": d.query.cols_by,
+                    }))
+                    .collect::<Vec<_>>())
+            })
+            .map_err(|e| e.to_string()),
+        "get_dashboard" => {
+            let id = args.get("id").and_then(|v| v.as_i64()).ok_or("id required")?;
+            let d = store
+                .get_dashboard(id)
+                .map_err(|e| e.to_string())?
+                .ok_or("dashboard not found")?;
+            let r = store.run_time_query(&d.query).map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "dashboard": d.name, "result": r }))
         }
         "" => Err("unknown_tool — use tools/list or GET /v1/mcp/tools".into()),
         other => Err(format!("unknown_tool: {other}")),

@@ -2,8 +2,11 @@
  * In-memory Tauri IPC mock for Playwright (Vite UI without the Rust backend).
  * Injected via page.addInitScript before the app loads.
  */
+import { mockAnalyticsSource } from "./mockAnalytics";
+
 export function mockTauriInitScript(): string {
   return `(() => {
+${mockAnalyticsSource()}
   const flags = {
     focus_default_mins: "50",
     break_reminders: "0",
@@ -180,6 +183,8 @@ export function mockTauriInitScript(): string {
       case "resume_tracking":
         return null;
       default: {
+        const handled = analyticsInvoke(cmd, args);
+        if (handled !== undefined) return handled;
         // Prefer empty collections so list UIs do not crash on .map.
         if (
           cmd.startsWith("list_") ||

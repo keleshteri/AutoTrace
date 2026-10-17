@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TimerView } from "../components/TimerView";
-import type { FocusSession } from "./api";
+import type { FocusSession } from "../lib/api";
 
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof import("../lib/api")>("../lib/api");
@@ -17,6 +17,27 @@ vi.mock("../lib/api", async () => {
       endFocus: vi.fn(),
       extendFocus: vi.fn(),
       getFeatureFlag: vi.fn(async () => "50"),
+      listBlockRules: vi.fn(async () => []),
+    },
+  };
+});
+
+vi.mock("../lib/analyticsApi", async () => {
+  const actual = await vi.importActual<typeof import("../lib/analyticsApi")>("../lib/analyticsApi");
+  return {
+    ...actual,
+    analyticsApi: {
+      focusOverview: vi.fn(async () => ({
+        day: "2026-10-17",
+        focus_secs: 0,
+        focus_sessions: 0,
+        break_secs: 0,
+        week: [],
+        week_total_secs: 0,
+        week_avg_session_secs: 0,
+        distraction_secs: 0,
+        top_distractions: [],
+      })),
     },
   };
 });

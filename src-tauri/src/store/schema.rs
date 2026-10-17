@@ -490,7 +490,92 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('planning_instructions', '')
 UPDATE settings SET value = '13' WHERE key = 'schema_version';
 "#;
 
-pub const SCHEMA_VERSION: i64 = 13;
+const MIGRATION_V14: &str = r#"
+CREATE TABLE IF NOT EXISTS dashboards (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    description TEXT,
+    query_json  TEXT NOT NULL,
+    pinned      INTEGER NOT NULL DEFAULT 1,
+    template    TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    dashboard_id  INTEGER REFERENCES dashboards(id) ON DELETE CASCADE,
+    period        TEXT NOT NULL DEFAULT 'day',
+    schedule_json TEXT NOT NULL DEFAULT '{"kind":"manual"}',
+    ai_enabled    INTEGER NOT NULL DEFAULT 1,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    last_run_at   TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS report_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id     INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    period_from   TEXT NOT NULL,
+    period_to     TEXT NOT NULL,
+    trigger       TEXT NOT NULL DEFAULT 'manual',
+    status        TEXT NOT NULL DEFAULT 'ready',
+    result_json   TEXT,
+    insights_json TEXT,
+    ai_summary    TEXT,
+    error         TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_report_runs_report ON report_runs(report_id, created_at);
+
+CREATE TABLE IF NOT EXISTS routines (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    schedule_json TEXT NOT NULL,
+    action_kind   TEXT NOT NULL,
+    action_json   TEXT NOT NULL DEFAULT '{}',
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    builtin       TEXT,
+    last_run_at   TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS routine_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    routine_id  INTEGER NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
+    trigger     TEXT NOT NULL DEFAULT 'manual',
+    status      TEXT NOT NULL DEFAULT 'running',
+    output      TEXT,
+    started_at  TEXT NOT NULL,
+    ended_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_routine_runs_routine ON routine_runs(routine_id, started_at);
+
+CREATE TABLE IF NOT EXISTS meetings (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    calendar_event_id INTEGER UNIQUE REFERENCES calendar_events(id) ON DELETE SET NULL,
+    title             TEXT NOT NULL,
+    started_at        TEXT NOT NULL,
+    ended_at          TEXT NOT NULL,
+    attendees         TEXT,
+    attendance        TEXT NOT NULL DEFAULT 'unknown',
+    client_id         INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+    project_id        INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    transcript        TEXT,
+    summary           TEXT,
+    session_id        INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_meetings_started ON meetings(started_at);
+
+INSERT OR IGNORE INTO settings (key, value) VALUES ('silent_mode', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('silent_during_focus', '1');
+
+UPDATE settings SET value = '14' WHERE key = 'schema_version';
+"#;
+
+pub const SCHEMA_VERSION: i64 = 14;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let current: i64 = conn
@@ -592,6 +677,14 @@ pub fn migrate(conn: &Connection) -> Result<()> {
     }
     if current < 13 {
         let _ = conn.execute_batch(MIGRATION_V13);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '13')
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+    }
+    if current < 14 {
+        conn.execute_batch(MIGRATION_V14)?;
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AiChat,
   AiMessage,
@@ -8,6 +8,7 @@ import {
   downloadText,
   todayLocal,
 } from "../lib/api";
+import { analyticsApi, MentionItem, PERIODS } from "../lib/analyticsApi";
 
 type Props = { onError: (msg: string | null) => void };
 
@@ -60,6 +61,13 @@ export function AiView({ onError }: Props) {
   const [showSkills, setShowSkills] = useState(false);
   const [templates, setTemplates] = useState<AiTemplate[]>([]);
   const [apiStatus, setApiStatus] = useState("…");
+  const [mentions, setMentions] = useState<MentionItem[]>([]);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionOpts, setMentionOpts] = useState<MentionItem[]>([]);
+  const [mentionIdx, setMentionIdx] = useState(0);
+  const [mentionPeriod, setMentionPeriod] = useState("month");
+  const [ctxPreview, setCtxPreview] = useState<Record<string, unknown> | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const day = todayLocal();
   const greet = useMemo(() => greetingName(), []);
@@ -147,10 +155,81 @@ export function AiView({ onError }: Props) {
     }
   }
 
+  useEffect(() => {
+    if (mentionQuery === null) return;
+    let cancelled = false;
+    const id = window.setTimeout(() => {
+      void analyticsApi
+        .mentionSearch(mentionQuery)
+        .then((opts) => {
+          if (cancelled) return;
+          setMentionOpts(opts.filter((o) => !mentions.some((m) => m.kind === o.kind && m.id === o.id)));
+          setMentionIdx(0);
+        })
+        .catch(() => setMentionOpts([]));
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+    };
+  }, [mentionQuery, mentions]);
+
+  // Refresh the "what the AI will see" preview when it's open.
+  useEffect(() => {
+    if (!ctxPreview) return;
+    if (mentions.length === 0) {
+      setCtxPreview(null);
+      return;
+    }
+    void analyticsApi.mentionContext(mentions, mentionPeriod).then(setCtxPreview).catch(() => undefined);
+  }, [mentions, mentionPeriod]);
+
+  function onInputChange(value: string, caret: number) {
+    setInput(value);
+    const before = value.slice(0, caret);
+    const m = /(?:^|\s)@([^\s@]{0,30})$/.exec(before);
+    setMentionQuery(m ? m[1] : null);
+  }
+
+  function pickMention(item: MentionItem) {
+    const el = inputRef.current;
+    const caret = el?.selectionStart ?? input.length;
+    const before = input.slice(0, caret).replace(/@([^\s@]{0,30})$/, `@${item.label} `);
+    const next = before + input.slice(caret);
+    setInput(next);
+    setMentions((ms) => (ms.some((m) => m.kind === item.kind && m.id === item.id) ? ms : [...ms, item]));
+    setMentionQuery(null);
+    window.requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(before.length, before.length);
+    });
+  }
+
   async function onSend(e?: FormEvent) {
     e?.preventDefault();
     if (!input.trim() || busy) return;
-    await runPrompt({ prompt: input.trim(), agent: "chat" });
+    if (mentions.length === 0) {
+      await runPrompt({ prompt: input.trim(), agent: "chat" });
+      return;
+    }
+    setBusy(true);
+    setResult(null);
+    try {
+      await ensureEnabled();
+      const id = await ensureChat();
+      const context = await analyticsApi.mentionContext(mentions, mentionPeriod);
+      const r = await analyticsApi.runAiChatWithContext({ prompt: input.trim(), context, chatId: id, day });
+      setResult(r);
+      setMessages(await api.listAiMessages(id));
+      setInput("");
+      setMentions([]);
+      setCtxPreview(null);
+      onError(null);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onQuick(q: (typeof QUICK)[number]) {
@@ -286,13 +365,98 @@ export function AiView({ onError }: Props) {
               )}
 
               <form className="agent-composer" onSubmit={(e) => void onSend(e)}>
+                {mentions.length > 0 && (
+                  <div className="mention-chips">
+                    {mentions.map((m) => (
+                      <span key={`${m.kind}:${m.id}`} className={`mention-chip kind-${m.kind}`}>
+                        <span className="mention-kind">{m.kind}</span> {m.label}
+                        <button
+                          type="button"
+                          aria-label={`Remove ${m.label}`}
+                          onClick={() => setMentions((ms) => ms.filter((x) => x !== m))}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                    <select
+                      value={mentionPeriod}
+                      aria-label="Period for mentioned data"
+                      onChange={(e) => setMentionPeriod(e.target.value)}
+                    >
+                      {PERIODS.filter((p) => p.id !== "custom").map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() =>
+                        ctxPreview
+                          ? setCtxPreview(null)
+                          : void analyticsApi.mentionContext(mentions, mentionPeriod).then(setCtxPreview)
+                      }
+                    >
+                      {ctxPreview ? "Hide data" : "What the AI will see"}
+                    </button>
+                  </div>
+                )}
+                {ctxPreview && <pre className="json-view mention-preview">{JSON.stringify(ctxPreview, null, 2)}</pre>}
+                {mentionQuery !== null && mentionOpts.length > 0 && (
+                  <div className="mention-pop" role="listbox" aria-label="Mention">
+                    {mentionOpts.map((o, i) => (
+                      <div key={`${o.kind}:${o.id}`}>
+                        {(i === 0 || mentionOpts[i - 1].kind !== o.kind) && (
+                          <div className="mention-group">{o.kind}s</div>
+                        )}
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={i === mentionIdx}
+                          className={i === mentionIdx ? "active" : undefined}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            pickMention(o);
+                          }}
+                        >
+                          <span>{o.label}</span>
+                          {o.sub && <span className="muted">{o.sub}</span>}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <textarea
+                  ref={inputRef}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask AutoTrace anything…"
+                  onChange={(e) => onInputChange(e.target.value, e.target.selectionStart)}
+                  placeholder="Ask AutoTrace anything… type @ to mention a client, project or dashboard"
                   rows={3}
                   disabled={busy}
                   onKeyDown={(e) => {
+                    if (mentionQuery !== null && mentionOpts.length > 0) {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setMentionIdx((i) => (i + 1) % mentionOpts.length);
+                        return;
+                      }
+                      if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setMentionIdx((i) => (i - 1 + mentionOpts.length) % mentionOpts.length);
+                        return;
+                      }
+                      if (e.key === "Enter" || e.key === "Tab") {
+                        e.preventDefault();
+                        pickMention(mentionOpts[mentionIdx]);
+                        return;
+                      }
+                      if (e.key === "Escape") {
+                        setMentionQuery(null);
+                        return;
+                      }
+                    }
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
                       void onSend();

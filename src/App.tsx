@@ -6,7 +6,14 @@ import { SessionDetail } from "./components/SessionDetail";
 import { WorkView } from "./components/WorkView";
 import { SettingsView } from "./components/SettingsView";
 import { RulesView } from "./components/RulesView";
-import { ReportsView } from "./components/ReportsView";
+import { ReportsHubView } from "./components/ReportsHubView";
+import { TrackedTimeView } from "./components/TrackedTimeView";
+import { DashboardsView } from "./components/DashboardsView";
+import { RoutinesView } from "./components/RoutinesView";
+import { MeetingsView } from "./components/MeetingsView";
+import { CapacityView } from "./components/CapacityView";
+import { WhatsNew, useWhatsNew } from "./components/WhatsNew";
+import { analyticsApi, Dashboard } from "./lib/analyticsApi";
 import { ProfitView, TeamsView } from "./components/ProfitView";
 import { FocusView } from "./components/FocusView";
 import { IntegrationsView } from "./components/IntegrationsView";
@@ -30,6 +37,7 @@ import {
   todayLocal,
 } from "./lib/api";
 import "./App.css";
+import "./analytics.css";
 
 function App() {
   const [nav, setNav] = useState<NavId>("calendar");
@@ -64,6 +72,55 @@ function App() {
   const [dismissedDueId, setDismissedDueId] = useState<number | null>(null);
   const [breakFullscreen, setBreakFullscreen] = useState(false);
   const [urgeUntil, setUrgeUntil] = useState(0);
+  const [dashboards, setDashboards] = useState<Dashboard[]>([]);
+  const [activeDashboardId, setActiveDashboardId] = useState<number | null>(null);
+  const [silent, setSilent] = useState(false);
+  const [silentDuringFocus, setSilentDuringFocus] = useState(true);
+  const whatsNew = useWhatsNew(status?.version);
+
+  const refreshDashboards = useCallback(async () => {
+    try {
+      setDashboards(await analyticsApi.listDashboards());
+    } catch {
+      /* non-fatal: sidebar just shows no pinned dashboards */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDashboards();
+    void api.getFeatureFlag("silent_mode").then((v) => setSilent(v === "1")).catch(() => undefined);
+    void api
+      .getFeatureFlag("silent_during_focus")
+      .then((v) => setSilentDuringFocus(v !== "0"))
+      .catch(() => undefined);
+  }, [refreshDashboards]);
+
+  function toggleSilent() {
+    const next = !silent;
+    setSilent(next);
+    void api.setFeatureFlag("silent_mode", next ? "1" : "0").catch(() => undefined);
+  }
+
+  function openDashboard(id: number) {
+    setActiveDashboardId(id);
+    setNav("dashboard");
+  }
+
+  function openHelp(action: "docs" | "bug" | "feature" | "changelog") {
+    if (action === "changelog") {
+      whatsNew.open();
+      return;
+    }
+    const base = "https://github.com/keleshteri/AutoTrace";
+    const env = `AutoTrace ${status?.version ?? "?"} · ${status?.tracker.platform ?? "?"}`;
+    const url =
+      action === "docs"
+        ? `${base}#readme`
+        : action === "bug"
+          ? `${base}/issues/new?labels=bug&body=${encodeURIComponent(`**What happened**\n\n**Expected**\n\n**Steps**\n\n---\n${env}`)}`
+          : `${base}/issues/new?labels=enhancement&body=${encodeURIComponent(`**Idea**\n\n**Why it helps**\n\n---\n${env}`)}`;
+    void api.openExternalUrl(url).catch((e) => setError(String(e)));
+  }
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -434,6 +491,10 @@ function App() {
   }, [nav, selectedIds, selected]);
 
   const showSummary = nav === "calendar";
+  // Silent mode: manual toggle, or automatically while a focus session runs.
+  const effectiveSilent =
+    silent || (silentDuringFocus && liveFocus?.status === "active" && sessionKind === "focus");
+  const activeDashboard = dashboards.find((d) => d.id === activeDashboardId) ?? null;
   const activeWorkspace = workspaces.find((w) => w.is_active) ?? workspaces[0];
 
   return (
@@ -454,6 +515,10 @@ function App() {
               .then((w) => api.setActiveWorkspace(w.id))
               .then(refreshWorkspaces)
           }
+          pinnedDashboards={dashboards.filter((d) => d.pinned)}
+          activeDashboardId={activeDashboardId}
+          onOpenDashboard={openDashboard}
+          onHelp={openHelp}
         />
 
         <div className="main-col" style={{ position: "relative" }}>
@@ -489,7 +554,7 @@ function App() {
             </div>
           )}
           <BreakCoach
-            visible={breakCoachOpen && !onBreak}
+            visible={breakCoachOpen && !onBreak && !effectiveSilent}
             everyMins={breakEvery}
             breakMins={breakLen}
             snoozeMins={breakSnooze}
@@ -498,7 +563,10 @@ function App() {
             onDismiss={() => setBreakCoachOpen(false)}
           />
 
-          {duePlanned && !onBreak && !(liveFocus?.status === "active") && (
+          {duePlanned &&
+            !onBreak &&
+            !(liveFocus?.status === "active") &&
+            !(effectiveSilent && !plannedAutoStart) && (
             <PlannedDuePrompt
               session={duePlanned}
               autoStart={plannedAutoStart}
@@ -545,6 +613,8 @@ function App() {
               }}
               onError={setError}
               onOpenActivity={() => setNav("activity")}
+              silent={effectiveSilent}
+              onToggleSilent={toggleSilent}
             />
           )}
 
@@ -633,7 +703,48 @@ function App() {
           )}
 
           {nav === "rules" && <RulesView onError={setError} />}
-          {nav === "reports" && <ReportsView onError={setError} />}
+          {nav === "reports" && <ReportsHubView onError={setError} onOpenDashboard={openDashboard} />}
+          {nav === "tracked" && (
+            <TrackedTimeView
+              onError={setError}
+              onDashboardSaved={(d) => {
+                void refreshDashboards();
+                openDashboard(d.id);
+              }}
+            />
+          )}
+          {(nav === "dashboards" || nav === "ws_dashboards") && (
+            <DashboardsView
+              onError={setError}
+              onOpen={(d) => {
+                void refreshDashboards();
+                openDashboard(d.id);
+              }}
+              onNewFromScratch={() => setNav("tracked")}
+              onChanged={() => void refreshDashboards()}
+            />
+          )}
+          {nav === "dashboard" && activeDashboard && (
+            <TrackedTimeView
+              key={activeDashboard.id}
+              onError={setError}
+              dashboard={activeDashboard}
+              onDashboardSaved={(d) => {
+                void refreshDashboards();
+                openDashboard(d.id);
+              }}
+              onDashboardDeleted={() => {
+                setActiveDashboardId(null);
+                void refreshDashboards();
+                setNav("dashboards");
+              }}
+            />
+          )}
+          {nav === "routines" && <RoutinesView onError={setError} />}
+          {nav === "meetings" && (
+            <MeetingsView hierarchy={hierarchy} onError={setError} onLogged={() => void refreshDay()} />
+          )}
+          {nav === "resourcing" && <CapacityView onError={setError} onOpenTimer={() => setNav("timer")} />}
           {nav === "profit" && <ProfitView onError={setError} />}
           {nav === "teams" && <TeamsView onError={setError} />}
           {nav === "integrations" && <IntegrationsView onError={setError} />}
@@ -647,11 +758,11 @@ function App() {
             />
           )}
 
-          {(nav === "ws_overview" || nav === "ws_dashboards") && (
+          {nav === "ws_overview" && (
             <div className="page">
               <div className="page-head">
                 <h2>
-                  {nav === "ws_overview" ? "Workspace Overview" : "Dashboards"}
+                  Workspace Overview
                 </h2>
               </div>
               <div className="card">
@@ -693,11 +804,19 @@ function App() {
         )}
       </div>
 
+      {whatsNew.visible && <WhatsNew onClose={whatsNew.close} onNavigate={(id) => { whatsNew.close(); setNav(id); }} />}
+
       <StatusBar
         trackerStatus={status?.tracker.status ?? "…"}
         currentApp={status?.tracker.current_app ?? null}
         distractionBlocked={status?.tracker.distraction_blocked ?? null}
-        breakReminder={onBreak ? `Break · ${formatElapsedSafe(breakRemaining)}` : breakReminder}
+        breakReminder={
+          onBreak
+            ? `Break · ${formatElapsedSafe(breakRemaining)}`
+            : effectiveSilent
+              ? null
+              : breakReminder
+        }
         focus={liveFocus}
         sinceBreakSecs={liveSinceBreak}
         onBreak={onBreak}

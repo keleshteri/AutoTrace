@@ -4,6 +4,8 @@
 //! user later enables an opt-in integration (out of scope for MVP).
 
 mod ai;
+pub mod analytics;
+pub mod query;
 mod models;
 mod schema;
 

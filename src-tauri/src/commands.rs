@@ -419,6 +419,7 @@ pub fn init_state(app: &AppHandle) -> Result<AppState, String> {
     let _ = store.reconcile_stale_focus_on_launch();
     let tracker = Arc::new(TrackerHandle::start(Arc::clone(&store)));
     let local_api = Arc::new(crate::integrations::LocalApiHandle::new(Arc::clone(&store)));
+    crate::automation::start_scheduler(Arc::clone(&store));
 
     Ok(AppState {
         store,
@@ -1105,12 +1106,26 @@ pub fn distraction_report(
         .map_err(|e| e.to_string())
 }
 
+/// http(s) (plus the macOS System Settings deep link), no whitespace/control
+/// characters — blocks file:, javascript: and argument tricks.
+fn is_safe_external_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    (lower.starts_with("https://")
+        || lower.starts_with("http://")
+        || lower.starts_with("x-apple.systempreferences:com.apple.preference.security"))
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
+    if !is_safe_external_url(&url) {
+        return Err("only web links can be opened".into());
+    }
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", "", &url])
+        // Not `cmd /C start`: cmd treats `&`, `|`, `^` in the URL as shell syntax.
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &url])
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -1632,4 +1647,19 @@ pub fn ai_sidecar_status(state: State<'_, AppState>) -> Result<serde_json::Value
         "healthy": healthy,
         "ai_enabled": state.store.ai_enabled(),
     }))
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::is_safe_external_url;
+
+    #[test]
+    fn external_url_allowlist() {
+        assert!(is_safe_external_url("https://github.com/x/issues/new?labels=bug&body=a%0Ab"));
+        assert!(is_safe_external_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"));
+        assert!(!is_safe_external_url("file:///etc/passwd"));
+        assert!(!is_safe_external_url("javascript:alert(1)"));
+        assert!(!is_safe_external_url("https://x.com/ & calc"));
+        assert!(!is_safe_external_url("-flag"));
+    }
 }

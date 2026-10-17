@@ -1,4 +1,6 @@
 mod ai;
+mod analytics_commands;
+mod automation;
 mod commands;
 mod integrations;
 mod store;
@@ -146,6 +148,39 @@ pub fn run() {
             commands::list_ai_messages,
             commands::run_ai_agent,
             commands::ai_sidecar_status,
+            analytics_commands::run_time_query,
+            analytics_commands::time_query_sessions,
+            analytics_commands::export_time_query_csv,
+            analytics_commands::resolve_period,
+            analytics_commands::list_dashboards,
+            analytics_commands::list_dashboard_templates,
+            analytics_commands::save_dashboard,
+            analytics_commands::create_dashboard_from_template,
+            analytics_commands::set_dashboard_pinned,
+            analytics_commands::delete_dashboard,
+            analytics_commands::list_reports,
+            analytics_commands::save_report,
+            analytics_commands::delete_report,
+            analytics_commands::run_report,
+            analytics_commands::list_report_runs,
+            analytics_commands::list_routines,
+            analytics_commands::save_routine,
+            analytics_commands::set_routine_enabled,
+            analytics_commands::delete_routine,
+            analytics_commands::run_routine,
+            analytics_commands::list_routine_runs,
+            analytics_commands::list_meetings,
+            analytics_commands::create_meeting,
+            analytics_commands::update_meeting,
+            analytics_commands::attach_meeting_transcript,
+            analytics_commands::summarize_meeting,
+            analytics_commands::log_meeting_session,
+            analytics_commands::delete_meeting,
+            analytics_commands::capacity_report,
+            analytics_commands::mention_search,
+            analytics_commands::mention_context,
+            analytics_commands::run_ai_chat_with_context,
+            analytics_commands::focus_overview,
 
         ])
         .build(tauri::generate_context!())

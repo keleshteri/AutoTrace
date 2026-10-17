@@ -11,6 +11,7 @@ import {
 import { StartSessionModal } from "./StartSessionModal";
 import { PlanScheduleModal } from "./PlanScheduleModal";
 import { displaySecs, sessionCaption } from "../lib/timerDisplay";
+import { FocusPanel } from "./FocusPanel";
 
 type Props = {
   focus: FocusSession | null;
@@ -20,6 +21,8 @@ type Props = {
   onChanged: () => void;
   onError: (msg: string | null) => void;
   onOpenActivity: () => void;
+  silent?: boolean;
+  onToggleSilent?: () => void;
 };
 
 function fmtClock(iso: string): string {
@@ -47,7 +50,10 @@ export function TimerView({
   onChanged,
   onError,
   onOpenActivity,
+  silent = false,
+  onToggleSilent,
 }: Props) {
+  const [sideTab, setSideTab] = useState<"overview" | "timeline">("overview");
   const [menuOpen, setMenuOpen] = useState(false);
   const [boltOpen, setBoltOpen] = useState(false);
   const [modalKind, setModalKind] = useState<SessionKind | null>(null);
@@ -193,6 +199,23 @@ export function TimerView({
   return (
     <div className="timer-layout">
       <div className="timer-stage">
+        {onToggleSilent && (
+          <div className="timer-topbar">
+            <button
+              type="button"
+              className={`chip-btn${silent ? " on" : ""}`}
+              aria-pressed={silent}
+              onClick={onToggleSilent}
+              title="Silent mode hides break reminders and planned-session prompts"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0" />
+                {silent && <path d="M4 4l16 16" />}
+              </svg>
+              {silent ? "Silent mode on" : "Silent mode"}
+            </button>
+          </div>
+        )}
         <div className="timer-ring-wrap">
           <svg className="timer-ring" viewBox="0 0 240 240">
             <circle cx="120" cy="120" r={r} className="timer-ring-bg" />
@@ -384,7 +407,10 @@ export function TimerView({
 
       <aside className="timer-side">
         <div className="segment" style={{ marginBottom: 12 }}>
-          <button type="button" className="active">
+          <button type="button" className={sideTab === "overview" ? "active" : undefined} onClick={() => setSideTab("overview")}>
+            Overview
+          </button>
+          <button type="button" className={sideTab === "timeline" ? "active" : undefined} onClick={() => setSideTab("timeline")}>
             Timeline
           </button>
           <button type="button" onClick={onOpenActivity}>
@@ -392,7 +418,9 @@ export function TimerView({
           </button>
         </div>
 
-        <div className="planned-timeline">
+        {sideTab === "overview" && <FocusPanel onError={onError} refreshKey={focus?.status} />}
+
+        {sideTab === "timeline" && <div className="planned-timeline">
           {planned.length === 0 ? (
             <div className="card">
               <p className="kicker">No planned sessions</p>
@@ -426,7 +454,7 @@ export function TimerView({
               </div>
             ))
           )}
-        </div>
+        </div>}
       </aside>
 
       {modalKind && (

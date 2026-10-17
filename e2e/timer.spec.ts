@@ -3,6 +3,7 @@ import { mockTauriInitScript } from "./mockTauri";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(mockTauriInitScript());
+  await page.addInitScript(() => localStorage.setItem("autotrace.whatsNew.seen", "0.1.1"));
 });
 
 test("app boots and shows calendar shell", async ({ page }) => {
@@ -10,19 +11,19 @@ test("app boots and shows calendar shell", async ({ page }) => {
   await expect(page.getByText("Track", { exact: true }).first()).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByRole("button", { name: /Timer/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Focus", exact: true })).toBeVisible();
 });
 
 test("timer shows time since last break when idle", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /Timer/i }).click();
+  await page.getByRole("button", { name: "Focus", exact: true }).click();
   await expect(page.getByText("Time since last break").first()).toBeVisible();
   await expect(page.locator(".timer-time").first()).toHaveText(/8:2\d/);
 });
 
 test("start focus switches ring to focus elapsed", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /Timer/i }).click();
+  await page.getByRole("button", { name: "Focus", exact: true }).click();
   await page.locator(".timer-ctrl.play").first().click();
   await page.getByRole("menuitem", { name: "Start Focus" }).click();
   await page.getByRole("button", { name: /^Start Focus$/i }).click();
